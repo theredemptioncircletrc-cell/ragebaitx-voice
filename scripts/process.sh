@@ -77,19 +77,26 @@ test -s "$WORK/voice.wav" || { echo "::error::Applio produced no audio."; exit 1
 end
 
 log "Mix and rebuild video"
+# Re-encode to a social-media friendly size (about 5 Mbps, max 1080x1920) so files stay small
+# enough for n8n to upload without running out of memory. Set VIDEO_REENCODE=false to keep the original.
+if [ "${VIDEO_REENCODE:-true}" = "true" ]; then
+  VIDEO_ARGS=(-c:v libx264 -preset veryfast -crf 23 -maxrate "${VIDEO_MAXRATE:-5M}" -bufsize 10M -pix_fmt yuv420p -vf "scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2")
+else
+  VIDEO_ARGS=(-c:v copy)
+fi
 if [ -n "$GAME" ]; then
   FILTER="[1:a]aresample=44100,volume=${VOICE_VOLUME}[v];[2:a]aresample=44100,volume=${GAME_VOLUME}[g];[v][g]amix=inputs=2:duration=longest:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]"
   ffmpeg -nostdin -hide_banner -loglevel error -y \
     -i "$WORK/in.mp4" -i "$WORK/voice.wav" -i "$GAME" \
     -filter_complex "$FILTER" \
-    -map 0:v:0 -map "[a]" -c:v copy -c:a aac -b:a 192k -ar 48000 \
+    -map 0:v:0 -map "[a]" "${VIDEO_ARGS[@]}" -c:a aac -b:a 192k -ar 48000 \
     -shortest -movflags +faststart "$OUT_FILE"
 else
   FILTER="[1:a]aresample=44100,volume=${VOICE_VOLUME},loudnorm=I=-14:TP=-1.5:LRA=11[a]"
   ffmpeg -nostdin -hide_banner -loglevel error -y \
     -i "$WORK/in.mp4" -i "$WORK/voice.wav" \
     -filter_complex "$FILTER" \
-    -map 0:v:0 -map "[a]" -c:v copy -c:a aac -b:a 192k -ar 48000 \
+    -map 0:v:0 -map "[a]" "${VIDEO_ARGS[@]}" -c:a aac -b:a 192k -ar 48000 \
     -shortest -movflags +faststart "$OUT_FILE"
 fi
 ls -lh "$OUT_FILE"
