@@ -7,6 +7,6 @@ Put your Applio voice model here:
 
 Any file name works; the job uses the first `.pth` and `.index` it finds.
 
-GitHub refuses single files over 100 MB in the website uploader. If your `.index` (or `.pth`) is
-bigger than that, create a **Release** instead: Releases → Draft a new release → tag `voice-model` →
+The GitHub website only accepts files up to 25 MB. Voice models are usually bigger, so
+the easiest way is a **Release**: Releases → Draft a new release → tag `voice-model` →
 attach the files → Publish. The job downloads them from there automatically.

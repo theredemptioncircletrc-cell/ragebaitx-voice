@@ -27,7 +27,18 @@ log() { echo "::group::$*"; }
 end() { echo "::endgroup::"; }
 
 log "Download clip"
-curl -fsSL --retry 3 --retry-delay 5 -o "$WORK/in.mp4" "$CLIP_URL"
+if [[ "$CLIP_URL" == release:* ]]; then
+  # Test mode: "release:<tag>" downloads the first .mp4 attached to that release of this repo.
+  TAG="${CLIP_URL#release:}"
+  gh release download "$TAG" -R "$GITHUB_REPOSITORY" -p '*.mp4' -O "$WORK/in.mp4" --clobber
+else
+  URL="$CLIP_URL"
+  # Turn a normal Google Drive share link into a direct download link.
+  if [[ "$URL" =~ drive\.google\.com/file/d/([A-Za-z0-9_-]+) ]] || [[ "$URL" =~ drive\.google\.com/.*[?\&]id=([A-Za-z0-9_-]+) ]]; then
+    URL="https://drive.usercontent.google.com/download?id=${BASH_REMATCH[1]}&export=download&confirm=t"
+  fi
+  curl -fsSL --retry 3 --retry-delay 5 -o "$WORK/in.mp4" "$URL"
+fi
 ls -lh "$WORK/in.mp4"
 if ! ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$WORK/in.mp4" | grep -q .; then
   echo "::error::The clip has no audio track, nothing to voice-change."

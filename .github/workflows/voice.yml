@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       clip_url:
-        description: "Direct download link to the clip (MP4)"
+        description: "Direct MP4 link, a Google Drive share link, or release:<tag> to use an MP4 attached to a release"
         required: true
       job_id:
         description: "n8n job ID"
@@ -126,6 +126,7 @@ jobs:
 
       - name: Process the clip
         env:
+          GH_TOKEN: ${{ github.token }}
           CLIP_URL: ${{ inputs.clip_url }}
           OUT_FILE: ${{ github.workspace }}/out/voiced.mp4
           WORK_DIR: ${{ runner.temp }}/work
