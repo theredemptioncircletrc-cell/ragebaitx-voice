@@ -108,10 +108,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - name: Install ffmpeg, espeak and fonts
+      - name: Install ffmpeg and fonts
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg jq espeak-ng fonts-dejavu-core
+          sudo apt-get install -y -qq ffmpeg jq fonts-dejavu-core
       - name: Restore caches
         uses: actions/cache@v4
         with:
@@ -126,7 +126,7 @@ jobs:
         run: |
           python -m venv .venv-tts
           .venv-tts/bin/pip install -q --upgrade pip
-          .venv-tts/bin/pip install -q torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          .venv-tts/bin/pip install -q torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
           .venv-tts/bin/pip install -q "kokoro>=0.9.4" soundfile
       - name: Install Applio (CPU)
         run: |
