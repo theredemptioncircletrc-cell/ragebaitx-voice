@@ -1,0 +1,197 @@
+name: AI commentary clip
+
+# Started by the n8n workflows "RagebaitX – Clip Factory" and "RagebaitX – AI Commentary".
+# For clips with no voice-over. Two stages per clip:
+#   frames  : grab a grid of still frames so the AI can see what happens, send it to n8n
+#   narrate : read the AI's script with a free voice (Kokoro), turn it into your voice (Applio),
+#             mix it over the game sound, burn in captions, send the clip back to n8n
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "frames or narrate"
+        required: true
+        default: "frames"
+      clip_url:
+        description: "Direct MP4 link, a Google Drive share link, or release:<tag>"
+        required: true
+      job_id:
+        description: "n8n job ID"
+        required: false
+        default: "manual"
+      clip_id:
+        description: "OpusClip clip ID"
+        required: false
+        default: "manual"
+      clip_title:
+        description: "Clip title"
+        required: false
+        default: "clip"
+      callback_url:
+        description: "n8n webhook that receives the result (empty for manual tests)"
+        required: false
+        default: ""
+      payload:
+        description: "JSON with style, notes (frames) or script, pitch, index_rate, voice (narrate)"
+        required: false
+        default: "{}"
+
+run-name: "${{ inputs.stage == 'frames' && 'Frames' || 'Commentary' }}: ${{ inputs.clip_title }}"
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  APPLIO_COMMIT: 6d5d9511b7e719b1f613362bc767e841ad72fa72
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  frames:
+    if: inputs.stage == 'frames'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg jq
+      - name: Make the frame grid
+        id: grid
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLIP_URL: ${{ inputs.clip_url }}
+          OUT_DIR: ${{ github.workspace }}/out
+          WORK_DIR: ${{ runner.temp }}/work
+        run: bash scripts/frames.sh
+      - name: Upload the frame grid
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: frames-${{ github.run_id }}
+          path: out/frames.jpg
+          retention-days: 1
+          if-no-files-found: error
+      - name: Tell n8n the result
+        if: always() && inputs.callback_url != ''
+        env:
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          STATUS: ${{ job.status }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          DURATION: ${{ steps.grid.outputs.duration }}
+          HAS_AUDIO: ${{ steps.grid.outputs.has_audio }}
+          JOB_ID: ${{ inputs.job_id }}
+          CLIP_ID: ${{ inputs.clip_id }}
+          CLIP_TITLE: ${{ inputs.clip_title }}
+          CLIP_URL: ${{ inputs.clip_url }}
+          PAYLOAD: ${{ inputs.payload }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -n \
+            --arg stage frames --arg status "$STATUS" --arg artifact_id "${ARTIFACT_ID:-}" \
+            --arg duration "${DURATION:-0}" --arg has_audio "${HAS_AUDIO:-true}" \
+            --arg run_id "$GITHUB_RUN_ID" --arg run_url "$RUN_URL" \
+            --arg job_id "$JOB_ID" --arg clip_id "$CLIP_ID" --arg clip_title "$CLIP_TITLE" \
+            --arg clip_url "$CLIP_URL" --arg payload "$PAYLOAD" \
+            '{stage:$stage, status:$status, artifact_id:$artifact_id, duration:($duration|tonumber? // 0), has_audio:$has_audio,
+              run_id:$run_id, run_url:$run_url, job_id:$job_id, clip_id:$clip_id, clip_title:$clip_title, clip_url:$clip_url,
+              payload:($payload|fromjson? // {})}' \
+          | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
+
+  narrate:
+    if: inputs.stage == 'narrate'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install ffmpeg, espeak and fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg jq espeak-ng fonts-dejavu-core
+      - name: Restore caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/torch
+            ~/.cache/huggingface
+            applio/rvc/models/predictors
+            applio/rvc/models/embedders
+          key: narrate-${{ runner.os }}-${{ env.APPLIO_COMMIT }}-v1
+      - name: Install Kokoro (free text-to-speech)
+        run: |
+          python -m venv .venv-tts
+          .venv-tts/bin/pip install -q --upgrade pip
+          .venv-tts/bin/pip install -q torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          .venv-tts/bin/pip install -q "kokoro>=0.9.4" soundfile
+      - name: Install Applio (CPU)
+        run: |
+          if [ ! -f applio/core.py ]; then
+            mkdir -p applio && cd applio
+            git init -q
+            git remote add origin https://github.com/IAHispano/Applio.git
+            git fetch -q --depth 1 origin "$APPLIO_COMMIT"
+            git checkout -q -f FETCH_HEAD
+            cd ..
+          fi
+          python -m venv .venv-applio
+          .venv-applio/bin/pip install -q --upgrade pip
+          .venv-applio/bin/pip install -q torch==2.11.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+          .venv-applio/bin/pip install -q -r applio/requirements-engine.txt
+          cd applio && ../.venv-applio/bin/python core.py prerequisites --no-pretraineds-hifigan --models --no-exe
+      - name: Find the voice model
+        id: model
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p models
+          PTH=$(ls models/*.pth 2>/dev/null | head -1 || true)
+          if [ -z "$PTH" ]; then
+            gh release download voice-model -R "$GITHUB_REPOSITORY" -D models -p '*.pth' -p '*.index' || true
+            PTH=$(ls models/*.pth 2>/dev/null | head -1 || true)
+          fi
+          INDEX=$(ls models/*.index 2>/dev/null | head -1 || true)
+          echo "pth=${PTH:+$GITHUB_WORKSPACE/$PTH}" >> "$GITHUB_OUTPUT"
+          echo "index=${INDEX:+$GITHUB_WORKSPACE/$INDEX}" >> "$GITHUB_OUTPUT"
+      - name: Make the commentary clip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLIP_URL: ${{ inputs.clip_url }}
+          PAYLOAD: ${{ inputs.payload }}
+          OUT_FILE: ${{ github.workspace }}/out/voiced.mp4
+          WORK_DIR: ${{ runner.temp }}/work
+          PTH_PATH: ${{ steps.model.outputs.pth }}
+          INDEX_PATH: ${{ steps.model.outputs.index }}
+          APPLIO_DIR: ${{ github.workspace }}/applio
+          APPLIO_PY: ${{ github.workspace }}/.venv-applio/bin/python
+          TTS_PY: ${{ github.workspace }}/.venv-tts/bin/python
+        run: bash scripts/narrate.sh
+      - name: Upload the finished clip
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: voiced-${{ github.run_id }}
+          path: out/voiced.mp4
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+      - name: Tell n8n the result
+        if: always() && inputs.callback_url != ''
+        env:
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          STATUS: ${{ job.status }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          JOB_ID: ${{ inputs.job_id }}
+          CLIP_ID: ${{ inputs.clip_id }}
+          CLIP_TITLE: ${{ inputs.clip_title }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -n \
+            --arg status "$STATUS" --arg artifact_id "${ARTIFACT_ID:-}" --arg run_id "$GITHUB_RUN_ID" --arg run_url "$RUN_URL" \
+            --arg job_id "$JOB_ID" --arg clip_id "$CLIP_ID" --arg clip_title "$CLIP_TITLE" \
+            '{status:$status, artifact_id:$artifact_id, run_id:$run_id, run_url:$run_url, job_id:$job_id, clip_id:$clip_id, clip_title:$clip_title, mode:"commentary"}' \
+          | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
