@@ -36,6 +36,10 @@ on:
         description: "Index rate (0 to 1)"
         required: false
         default: "0.3"
+      speed:
+        description: "Playback speed of the finished clip (1.0 = unchanged, 1.15 = 15% faster)"
+        required: false
+        default: "1.15"
 
 run-name: "Voice: ${{ inputs.clip_title }}"
 
@@ -135,6 +139,7 @@ jobs:
           SEPARATE_VOICE: ${{ inputs.separate_voice }}
           PITCH: ${{ inputs.pitch }}
           INDEX_RATE: ${{ inputs.index_rate }}
+          SPEED: ${{ inputs.speed }}
           APPLIO_DIR: ${{ github.workspace }}/applio
           APPLIO_PY: ${{ github.workspace }}/.venv-applio/bin/python
           DEMUCS_PY: ${{ github.workspace }}/.venv-demucs/bin/python

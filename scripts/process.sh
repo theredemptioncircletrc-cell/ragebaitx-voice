@@ -22,6 +22,12 @@ PROTECT="${PROTECT:-0.33}"
 F0_METHOD="${F0_METHOD:-rmvpe}"
 VOICE_VOLUME="${VOICE_VOLUME:-1.0}"
 GAME_VOLUME="${GAME_VOLUME:-0.8}"
+# Playback speed for the finished clip (1.0 = unchanged). Speeds up picture and sound together,
+# so the voice talks faster but stays in sync with the video. The pitch is not changed by this.
+SPEED="${SPEED:-1.0}"
+if ! awk -v s="$SPEED" 'BEGIN { exit !(s+0 >= 0.5 && s+0 <= 2) }'; then
+  echo "::warning::SPEED '$SPEED' is not between 0.5 and 2, using 1.0"; SPEED=1.0
+fi
 
 log() { echo "::group::$*"; }
 end() { echo "::endgroup::"; }
@@ -79,20 +85,26 @@ end
 log "Mix and rebuild video"
 # Re-encode to a social-media friendly size (about 5 Mbps, max 1080x1920) so files stay small
 # enough for n8n to upload without running out of memory. Set VIDEO_REENCODE=false to keep the original.
-if [ "${VIDEO_REENCODE:-true}" = "true" ]; then
-  VIDEO_ARGS=(-c:v libx264 -preset veryfast -crf 23 -maxrate "${VIDEO_MAXRATE:-5M}" -bufsize 10M -pix_fmt yuv420p -vf "scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2")
+SPEED_ON=$(awk -v s="$SPEED" 'BEGIN { print (s+0 == 1) ? "false" : "true" }')
+if [ "${VIDEO_REENCODE:-true}" = "true" ] || [ "$SPEED_ON" = "true" ]; then
+  VF="scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2"
+  [ "$SPEED_ON" = "true" ] && VF="setpts=PTS/${SPEED},${VF}"
+  VIDEO_ARGS=(-c:v libx264 -preset veryfast -crf 23 -maxrate "${VIDEO_MAXRATE:-5M}" -bufsize 10M -pix_fmt yuv420p -vf "$VF")
 else
   VIDEO_ARGS=(-c:v copy)
 fi
+TEMPO=""
+[ "$SPEED_ON" = "true" ] && TEMPO=",atempo=${SPEED}"
+echo "Playback speed: ${SPEED}x"
 if [ -n "$GAME" ]; then
-  FILTER="[1:a]aresample=44100,volume=${VOICE_VOLUME}[v];[2:a]aresample=44100,volume=${GAME_VOLUME}[g];[v][g]amix=inputs=2:duration=longest:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]"
+  FILTER="[1:a]aresample=44100,volume=${VOICE_VOLUME}[v];[2:a]aresample=44100,volume=${GAME_VOLUME}[g];[v][g]amix=inputs=2:duration=longest:normalize=0${TEMPO},loudnorm=I=-14:TP=-1.5:LRA=11[a]"
   ffmpeg -nostdin -hide_banner -loglevel error -y \
     -i "$WORK/in.mp4" -i "$WORK/voice.wav" -i "$GAME" \
     -filter_complex "$FILTER" \
     -map 0:v:0 -map "[a]" "${VIDEO_ARGS[@]}" -c:a aac -b:a 192k -ar 48000 \
     -shortest -movflags +faststart "$OUT_FILE"
 else
-  FILTER="[1:a]aresample=44100,volume=${VOICE_VOLUME},loudnorm=I=-14:TP=-1.5:LRA=11[a]"
+  FILTER="[1:a]aresample=44100,volume=${VOICE_VOLUME}${TEMPO},loudnorm=I=-14:TP=-1.5:LRA=11[a]"
   ffmpeg -nostdin -hide_banner -loglevel error -y \
     -i "$WORK/in.mp4" -i "$WORK/voice.wav" \
     -filter_complex "$FILTER" \
