@@ -121,7 +121,7 @@ jobs:
             ~/.cache/huggingface
             applio/rvc/models/predictors
             applio/rvc/models/embedders
-          key: narrate-${{ runner.os }}-${{ env.APPLIO_COMMIT }}-v1
+          key: narrate-${{ runner.os }}-${{ env.APPLIO_COMMIT }}-v2
       - name: Install Kokoro (free text-to-speech)
         run: |
           python -m venv .venv-tts
@@ -143,6 +143,13 @@ jobs:
           .venv-applio/bin/pip install -q torch==2.11.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/cpu
           .venv-applio/bin/pip install -q -r applio/requirements-engine.txt
           cd applio && ../.venv-applio/bin/python core.py prerequisites --no-pretraineds-hifigan --models --no-exe
+      - name: Install Demucs (removes talking from the original clip)
+        if: inputs.stage == 'narrate' && contains(inputs.payload, '"remove_voice":true')
+        run: |
+          python -m venv .venv-demucs
+          .venv-demucs/bin/pip install -q --upgrade pip
+          .venv-demucs/bin/pip install -q torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          .venv-demucs/bin/pip install -q demucs==4.0.1 "numpy<2" soundfile
       - name: Find the voice model
         id: model
         env:
@@ -169,6 +176,7 @@ jobs:
           APPLIO_DIR: ${{ github.workspace }}/applio
           APPLIO_PY: ${{ github.workspace }}/.venv-applio/bin/python
           TTS_PY: ${{ github.workspace }}/.venv-tts/bin/python
+          DEMUCS_PY: ${{ github.workspace }}/.venv-demucs/bin/python
         run: bash scripts/narrate.sh
       - name: Upload the finished clip
         id: upload

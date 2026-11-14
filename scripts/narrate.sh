@@ -41,8 +41,21 @@ if ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=
 echo "Duration ${DUR}s, game audio: $HAS_AUDIO"
 echo "::endgroup::"
 
+# Optional: remove anyone talking in the original clip (streamer mic, Opus narrator), keep the game sound.
+GAME_SRC="0:a"
+if [ "$HAS_AUDIO" = "true" ] && [ "$(field remove_voice false)" = "true" ] && [ -x "${DEMUCS_PY:-}" ]; then
+  echo "::group::Remove the original talking (Demucs)"
+  ffmpeg -nostdin -hide_banner -loglevel error -y -i "$WORK/in.mp4" -vn -ac 2 -ar 44100 "$WORK/orig.wav"
+  "$DEMUCS_PY" -m demucs --two-stems=vocals -n htdemucs -d cpu -o "$WORK/sep" "$WORK/orig.wav"
+  if [ -s "$WORK/sep/htdemucs/orig/no_vocals.wav" ]; then
+    GAME_WAV="$WORK/sep/htdemucs/orig/no_vocals.wav"
+    echo "Talking removed, keeping the game sound."
+  fi
+  echo "::endgroup::"
+fi
+
 echo "::group::Read the script (Kokoro)"
-"$TTS_PY" "$HERE/tts.py" "$WORK/script.txt" "$DUR" "$WORK/tts.wav" "$WORK/captions.ass" "$VOICE" "$OFFSET"
+TTS_SPEED="$(field speed 1.05)" "$TTS_PY" "$HERE/tts.py" "$WORK/script.txt" "$DUR" "$WORK/tts.wav" "$WORK/captions.ass" "$VOICE" "$OFFSET"
 echo "::endgroup::"
 
 VOICE_WAV="$WORK/tts.wav"
@@ -78,13 +91,15 @@ else
 fi
 DELAY_MS=$(awk -v o="$OFFSET" 'BEGIN { printf "%d", o * 1000 }')
 VOICE_CHAIN="[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,adelay=${DELAY_MS}|${DELAY_MS},apad,volume=1.15"
+EXTRA_IN=()
+if [ -n "${GAME_WAV:-}" ]; then EXTRA_IN=(-i "$GAME_WAV"); GAME_SRC="2:a"; fi
 if [ "$HAS_AUDIO" = "true" ]; then
-  FILTER="${VOICE_CHAIN},asplit=2[v1][v2];[0:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${GAME_VOLUME}[g];[g][v2]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=400[gd];[gd][v1]amix=inputs=2:duration=first:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]"
+  FILTER="${VOICE_CHAIN},asplit=2[v1][v2];[${GAME_SRC}]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${GAME_VOLUME}[g];[g][v2]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=400[gd];[gd][v1]amix=inputs=2:duration=first:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]"
 else
   FILTER="${VOICE_CHAIN},loudnorm=I=-14:TP=-1.5:LRA=11[a]"
 fi
 ffmpeg -nostdin -hide_banner -loglevel error -y \
-  -i "$WORK/in.mp4" -i "$VOICE_WAV" \
+  -i "$WORK/in.mp4" -i "$VOICE_WAV" "${EXTRA_IN[@]}" \
   -filter_complex "$FILTER" -map 0:v:0 -map "[a]" -vf "$VF" \
   -c:v libx264 -preset veryfast -crf 23 -maxrate 5M -bufsize 10M -pix_fmt yuv420p \
   -c:a aac -b:a 192k -ar 48000 -t "$DUR" -movflags +faststart "$OUT_FILE"

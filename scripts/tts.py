@@ -4,6 +4,7 @@
 
 usage: python tts.py SCRIPT_TXT CLIP_SECONDS OUT_WAV OUT_ASS [VOICE] [START_OFFSET]
 """
+import os
 import re
 import sys
 
@@ -91,7 +92,7 @@ def main():
 
     pipe = KPipeline(lang_code="a")
     room = max(2.0, clip_s - offset - 0.3)
-    speed = 1.05
+    speed = float(os.environ.get("TTS_SPEED") or 1.05)
     audio, words = speak(pipe, lines, voice, speed)
     length = len(audio) / SR
     if length > room:
