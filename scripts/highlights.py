@@ -20,7 +20,7 @@ import sys
 STEP = 0.5          # seconds per loudness reading
 SR = 8000           # audio sample rate used for scanning (fast, plenty for loudness)
 BEFORE = 22.0       # seconds of build-up kept before a spike
-AFTER = 12.0        # seconds of reaction kept after a spike
+AFTER = 16.0        # seconds of reaction kept after a spike (room for a clean ending)
 MIN_GAP = 45.0      # two candidates are at least this far apart
 EDGE = 10.0         # ignore the first/last seconds (menus, stream start/end)
 
