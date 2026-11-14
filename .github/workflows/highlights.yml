@@ -1,0 +1,92 @@
+name: Find highlights
+
+# Started by the n8n workflow "RagebaitX – Highlight Maker".
+# Listens to a long gameplay video for hype moments, cuts each one out, and sends n8n
+# a frame grid per moment so the AI can pick the best ones. The cut moments are kept
+# on a temporary GitHub release (hl-<run id>) so the narrate job can grab them.
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "Google Drive share link or direct MP4 link of the long video"
+        required: true
+      job_id:
+        description: "n8n job ID"
+        required: false
+        default: "manual"
+      max_candidates:
+        description: "How many hype moments to send to the AI"
+        required: false
+        default: "10"
+      callback_url:
+        description: "n8n webhook that receives the result (empty for manual tests)"
+        required: false
+        default: ""
+      payload:
+        description: "JSON passed back to n8n unchanged (game, clips, vibe, notes)"
+        required: false
+        default: "{}"
+
+run-name: "Highlights: ${{ inputs.job_id }}"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg jq fonts-dejavu-core python3-numpy
+      - name: Find the hype moments
+        id: scan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VIDEO_URL: ${{ inputs.video_url }}
+          MAX_CANDIDATES: ${{ inputs.max_candidates }}
+          OUT_DIR: ${{ github.workspace }}/out
+          WORK_DIR: ${{ runner.temp }}/work
+        run: bash scripts/highlights.sh
+      - name: Keep the cut moments on a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "hl-${GITHUB_RUN_ID}" out/clips/*.mp4 -R "$GITHUB_REPOSITORY" \
+            --prerelease --title "Highlights ${{ inputs.job_id }}" \
+            --notes "Temporary: hype moments cut by the Find highlights job. Safe to delete."
+      - name: Upload the frame grids
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: grids-${{ github.run_id }}
+          path: out/grids
+          retention-days: 2
+          if-no-files-found: error
+      - name: Tell n8n the result
+        if: always() && inputs.callback_url != ''
+        env:
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          STATUS: ${{ job.status }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          COUNT: ${{ steps.scan.outputs.count }}
+          DURATION: ${{ steps.scan.outputs.duration }}
+          JOB_ID: ${{ inputs.job_id }}
+          VIDEO_URL: ${{ inputs.video_url }}
+          PAYLOAD: ${{ inputs.payload }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -n \
+            --arg stage highlights --arg status "$STATUS" --arg artifact_id "${ARTIFACT_ID:-}" \
+            --arg release "hl-${GITHUB_RUN_ID}" --arg count "${COUNT:-0}" --arg duration "${DURATION:-0}" \
+            --arg run_id "$GITHUB_RUN_ID" --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" \
+            --arg video_url "$VIDEO_URL" --arg payload "$PAYLOAD" \
+            '{stage:$stage, status:$status, artifact_id:$artifact_id, release:$release,
+              count:($count|tonumber? // 0), duration:($duration|tonumber? // 0),
+              run_id:$run_id, run_url:$run_url, job_id:$job_id, video_url:$video_url,
+              payload:($payload|fromjson? // {})}' \
+          | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
