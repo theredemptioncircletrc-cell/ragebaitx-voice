@@ -62,7 +62,12 @@ def write_ass(words, path, offset):
         end = (groups[i + 1][0][1] + offset) if i + 1 < len(groups) else g[-1][2] + offset + 0.3
         text = " ".join(re.sub(r"[{}\\]", "", w[0]) for w in g).upper()
         text = re.sub(r"[.,]+$", "", text)
-        lines.append(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Cap,,0,0,0,,{text}")
+        # Pop in with a little bounce; shouted/question moments go yellow.
+        fx = r"{\fscx72\fscy72\t(0,90,\fscx112\fscy112)\t(90,170,\fscx100\fscy100)"
+        if re.search(r"[!?]", text) or i == 0:
+            fx += r"\c&H0000E5FF&"
+        fx += "}"
+        lines.append(f"Dialogue: 0,{ass_time(start)},{ass_time(end)},Cap,,0,0,0,,{fx}{text}")
     head = """[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080

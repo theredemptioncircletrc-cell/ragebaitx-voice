@@ -91,9 +91,16 @@ HOOK=$(printf '%s' "$PAYLOAD" | jq -r '.hook_text // ""' | tr '\n' ' ' | sed 's/
 if [ -n "$HOOK" ]; then
   HOOK_END=$(awk -v d="$DUR" 'BEGIN { h=int(d/3600); m=int((d%3600)/60); s=d-h*3600-m*60; printf "%d:%02d:%05.2f", h, m, s }')
   sed -i '/^Style: Cap,/a Style: Hook,DejaVu Sans,74,\&H0000E5FF,\&H00FFFFFF,\&H00000000,\&H96000000,-1,0,0,0,100,100,0,0,1,7,3,8,70,70,190,1' "$WORK/captions.ass"
-  printf 'Dialogue: 1,0:00:00.00,%s,Hook,,0,0,0,,%s\n' "$HOOK_END" "$HOOK" >> "$WORK/captions.ass"
+  printf 'Dialogue: 1,0:00:00.00,%s,Hook,,0,0,0,,{\\fscx40\\fscy40\\t(80,260,\\fscx114\\fscy114)\\t(260,360,\\fscx100\\fscy100)}%s\n' "$HOOK_END" "$HOOK" >> "$WORK/captions.ass"
 fi
 SUBS="subtitles=$WORK/captions.ass:fontsdir=/usr/share/fonts/truetype/dejavu"
+INTRO=false
+PUNCH=""
+if [ "$(field vertical false)" = "true" ] && [ "$(field intro_fx true)" = "true" ]; then
+  # First 0.4 s: white flash + zoom punch into the action (text is added after, so it stays sharp).
+  INTRO=true
+  PUNCH="scale=w='trunc(1080*(1+0.14*max(0\,1-t/0.4))/2)*2':h=-2:eval=frame,crop=1080:1920,fade=in:st=0:d=0.25:color=white,"
+fi
 VW=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$WORK/in.mp4")
 VH=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$WORK/in.mp4")
 FOCUS=$(printf '%s' "$PAYLOAD" | jq -c '.focus // []')
@@ -101,11 +108,11 @@ if [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ] && [ 
   # Full-screen 9:16 crop that glides to where the AI saw the action.
   CROP=$(python3 "$HERE/cropexpr.py" "$VW" "$VH" "$FOCUS")
   echo "Follow-the-action crop: $FOCUS"
-  VF="${CROP},scale=1080:1920:flags=lanczos,setsar=1,$SUBS"
+  VF="${CROP},scale=1080:1920:flags=lanczos,setsar=1,${PUNCH}$SUBS"
 elif [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ]; then
   # Landscape gameplay -> 9:16 Short: blurred copy fills the screen, the game sits a little
   # zoomed in the middle, hook text above it, captions below it.
-  VF="split[m][b];[b]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:3,eq=brightness=-0.12[bg];[m]scale=1296:-2,crop=1080:ih[fg];[bg][fg]overlay=(W-w)/2:520,setsar=1,$SUBS"
+  VF="split[m][b];[b]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:3,eq=brightness=-0.12[bg];[m]scale=1296:-2,crop=1080:ih[fg];[bg][fg]overlay=(W-w)/2:520,setsar=1,${PUNCH}$SUBS"
 else
   VF="scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,$SUBS"
 fi
@@ -117,6 +124,12 @@ if [ "$HAS_AUDIO" = "true" ]; then
   FILTER="${VOICE_CHAIN},asplit=2[v1][v2];[${GAME_SRC}]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${GAME_VOLUME}[g];[g][v2]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=400[gd];[gd][v1]amix=inputs=2:duration=first:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]"
 else
   FILTER="${VOICE_CHAIN},loudnorm=I=-14:TP=-1.5:LRA=11[a]"
+fi
+if [ "$INTRO" = "true" ]; then
+  # Whoosh on the flash: filtered pink noise, made on the fly (no sound files needed).
+  W_IDX=$(( 2 + ${#EXTRA_IN[@]} / 2 ))
+  EXTRA_IN+=(-f lavfi -t 0.6 -i "anoisesrc=c=pink:r=48000:a=0.9")
+  FILTER="${FILTER%\[a\]}[pre];[${W_IDX}:a]highpass=f=600,lowpass=f=6000,afade=in:d=0.12,afade=out:st=0.12:d=0.45,volume=0.55,aformat=sample_fmts=fltp:channel_layouts=stereo[w];[pre][w]amix=inputs=2:duration=first:normalize=0[a]"
 fi
 ffmpeg -nostdin -hide_banner -loglevel error -y \
   -i "$WORK/in.mp4" -i "$VOICE_WAV" "${EXTRA_IN[@]}" \
