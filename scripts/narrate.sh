@@ -54,12 +54,26 @@ if [ "$HAS_AUDIO" = "true" ] && [ "$(field remove_voice false)" = "true" ] && [ 
   echo "::endgroup::"
 fi
 
-echo "::group::Read the script (Kokoro)"
-TTS_SPEED="$(field speed 1.05)" "$TTS_PY" "$HERE/tts.py" "$WORK/script.txt" "$DUR" "$WORK/tts.wav" "$WORK/captions.ass" "$VOICE" "$OFFSET"
+echo "::group::Read the script (ElevenLabs or free voice)"
+ELEVEN_VOICE="$(field eleven_voice "")"; ELEVEN_VOICE="${ELEVEN_VOICE:-${ELEVENLABS_VOICE_ID:-}}"
+USED_ELEVEN=false
+if [ -n "${ELEVENLABS_API_KEY:-}" ] && [ -n "$ELEVEN_VOICE" ] && [ "$(field use_eleven true)" = "true" ]; then
+  if "$TTS_PY" "$HERE/tts_eleven.py" "$WORK/script.txt" "$DUR" "$WORK/tts.wav" "$WORK/captions.ass" "$ELEVEN_VOICE" "$OFFSET"; then
+    USED_ELEVEN=true
+  else
+    echo "::warning::ElevenLabs failed, falling back to the free voice."
+  fi
+fi
+if [ "$USED_ELEVEN" != "true" ]; then
+  sed -i 's/\[[^]]*\]//g' "$WORK/script.txt"   # audio tags are only for ElevenLabs
+  TTS_SPEED="$(field speed 1.05)" "$TTS_PY" "$HERE/tts.py" "$WORK/script.txt" "$DUR" "$WORK/tts.wav" "$WORK/captions.ass" "$VOICE" "$OFFSET"
+fi
 echo "::endgroup::"
 
 VOICE_WAV="$WORK/tts.wav"
-if [ -n "${PTH_PATH:-}" ] && [ -f "$PTH_PATH" ]; then
+if [ "$USED_ELEVEN" = "true" ]; then
+  echo "Using your ElevenLabs voice directly (no Applio needed)."
+elif [ -n "${PTH_PATH:-}" ] && [ -f "$PTH_PATH" ]; then
   echo "::group::Turn it into your voice (Applio)"
   ( cd "$APPLIO_DIR" && "$APPLIO_PY" core.py infer \
       --input-path "$WORK/tts.wav" --output-path "$WORK/voice.wav" \

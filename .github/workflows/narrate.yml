@@ -177,6 +177,8 @@ jobs:
           APPLIO_PY: ${{ github.workspace }}/.venv-applio/bin/python
           TTS_PY: ${{ github.workspace }}/.venv-tts/bin/python
           DEMUCS_PY: ${{ github.workspace }}/.venv-demucs/bin/python
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
         run: bash scripts/narrate.sh
       - name: Upload the finished clip
         id: upload

@@ -10,7 +10,6 @@ import sys
 
 import numpy as np
 import soundfile as sf
-from kokoro import KPipeline
 
 SR = 24000
 GAP = 0.12  # pause between sentences, in seconds
@@ -90,6 +89,7 @@ def main():
     if not lines:
         sys.exit("Empty script")
 
+    from kokoro import KPipeline  # imported here so write_ass can be reused without Kokoro
     pipe = KPipeline(lang_code="a")
     room = max(2.0, clip_s - offset - 0.3)
     speed = float(os.environ.get("TTS_SPEED") or 1.05)
