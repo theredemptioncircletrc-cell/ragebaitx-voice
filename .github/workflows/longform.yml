@@ -1,0 +1,144 @@
+name: Long video
+
+# Started by the n8n workflow "RagebaitX – Long Video Maker".
+#   scan   : frame grids + loudest moments of the whole video -> n8n (the AI writes the narration)
+#   render : voice the narration, mix, intro + logo, upload the finished video to Google Drive
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "scan or render"
+        required: true
+        default: "scan"
+      video_url:
+        description: "Google Drive share link or direct MP4 link of the long video"
+        required: true
+      job_id:
+        description: "n8n job ID"
+        required: false
+        default: "manual"
+      callback_url:
+        description: "n8n webhook that receives the result"
+        required: false
+        default: ""
+      payload:
+        description: "JSON (scan: passed back to n8n; render: lines, intro_id, watermark_id, remove_voice, upload_url)"
+        required: false
+        default: "{}"
+
+run-name: "Long ${{ inputs.stage }}: ${{ inputs.job_id }}"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  scan:
+    if: inputs.stage == 'scan'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg jq fonts-dejavu-core python3-numpy
+      - name: Watch the video (frame grids + loud moments)
+        id: scan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VIDEO_URL: ${{ inputs.video_url }}
+          OUT_DIR: ${{ github.workspace }}/out
+          WORK_DIR: ${{ runner.temp }}/work
+        run: bash scripts/longscan.sh
+      - name: Upload the grids
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: longgrids-${{ github.run_id }}
+          path: out/grids
+          retention-days: 2
+          if-no-files-found: error
+      - name: Tell n8n the result
+        if: always() && inputs.callback_url != ''
+        env:
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          STATUS: ${{ job.status }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          DURATION: ${{ steps.scan.outputs.duration }}
+          JOB_ID: ${{ inputs.job_id }}
+          VIDEO_URL: ${{ inputs.video_url }}
+          PAYLOAD: ${{ inputs.payload }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -n --arg stage scan --arg status "$STATUS" --arg artifact_id "${ARTIFACT_ID:-}" --arg duration "${DURATION:-0}" \
+            --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" --arg video_url "$VIDEO_URL" --arg payload "$PAYLOAD" \
+            '{stage:$stage, status:$status, artifact_id:$artifact_id, duration:($duration|tonumber? // 0), run_url:$run_url,
+              job_id:$job_id, video_url:$video_url, payload:($payload|fromjson? // {})}' \
+          | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
+
+  render:
+    if: inputs.stage == 'render'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ffmpeg and fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg jq fonts-dejavu-core
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+      - name: Restore caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/torch
+            ~/.cache/huggingface
+          key: longform-${{ runner.os }}-v1
+      - name: Install voice tools (Kokoro fallback)
+        run: |
+          python -m venv .venv-tts
+          .venv-tts/bin/pip install -q --upgrade pip
+          .venv-tts/bin/pip install -q torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
+          .venv-tts/bin/pip install -q "kokoro>=0.9.4" soundfile
+      - name: Install Demucs (removes the original talking)
+        if: contains(inputs.payload, '"remove_voice":true')
+        run: |
+          python -m venv .venv-demucs
+          .venv-demucs/bin/pip install -q --upgrade pip
+          .venv-demucs/bin/pip install -q torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+          .venv-demucs/bin/pip install -q demucs==4.0.1 "numpy<2" soundfile
+      - name: Make the video
+        id: render
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VIDEO_URL: ${{ inputs.video_url }}
+          PAYLOAD: ${{ inputs.payload }}
+          OUT_DIR: ${{ github.workspace }}/out
+          WORK_DIR: ${{ runner.temp }}/work
+          TTS_PY: ${{ github.workspace }}/.venv-tts/bin/python
+          DEMUCS_PY: ${{ github.workspace }}/.venv-demucs/bin/python
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
+        run: bash scripts/longrender.sh
+      - name: Tell n8n the result
+        if: always() && inputs.callback_url != ''
+        env:
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          STATUS: ${{ job.status }}
+          DRIVE_ID: ${{ steps.render.outputs.drive_id }}
+          SIZE_MB: ${{ steps.render.outputs.size_mb }}
+          JOB_ID: ${{ inputs.job_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -n --arg stage render --arg status "$STATUS" --arg drive_id "${DRIVE_ID:-}" --arg size_mb "${SIZE_MB:-0}" \
+            --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" \
+            '{stage:$stage, status:$status, drive_id:$drive_id, size_mb:$size_mb, run_url:$run_url, job_id:$job_id}' \
+          | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
