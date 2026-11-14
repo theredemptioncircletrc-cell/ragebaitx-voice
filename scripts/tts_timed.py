@@ -135,6 +135,9 @@ def main():
     sf.write(out_wav, track, SR)
     # Captions use absolute times already, so no extra offset.
     write_ass([w for w in all_words if w[1] < clip_s], out_ass, 0.0)
+    if os.environ.get("WORDS_OUT"):
+        with open(os.environ["WORDS_OUT"], "w") as f:
+            json.dump([[w, round(a, 3), round(b, 3)] for w, a, b in all_words if a < clip_s], f)
     print(f"Timed speech: {len(pieces)} lines, {len(all_words)} words, ends {min(end, room) / 1:.1f}s, clip {clip_s:.1f}s")
 
 

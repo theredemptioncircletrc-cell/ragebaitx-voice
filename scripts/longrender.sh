@@ -57,10 +57,10 @@ printf '%s' "$PAYLOAD" | jq -c '.lines // []' > "$WORK/lines.json"
 echo "$(jq length "$WORK/lines.json") lines"
 ENGINE=kokoro; VID="am_puck"
 if [ -n "${ELEVENLABS_API_KEY:-}" ] && [ -n "${ELEVENLABS_VOICE_ID:-}" ]; then ENGINE=eleven; VID="$ELEVENLABS_VOICE_ID"; fi
-if ! TTS_SPEED=1.05 "$TTS_PY" "$HERE/tts_timed.py" "$WORK/lines.json" "$DUR" "$WORK/voice.wav" "$WORK/captions.ass" "$ENGINE" "$VID" 0.2; then
+if ! WORDS_OUT="$WORK/words.json" TTS_SPEED=1.05 "$TTS_PY" "$HERE/tts_timed.py" "$WORK/lines.json" "$DUR" "$WORK/voice.wav" "$WORK/captions.ass" "$ENGINE" "$VID" 0.2; then
   [ "$ENGINE" = "eleven" ] || exit 1
   echo "::warning::ElevenLabs failed, using the free voice."
-  TTS_SPEED=1.05 "$TTS_PY" "$HERE/tts_timed.py" "$WORK/lines.json" "$DUR" "$WORK/voice.wav" "$WORK/captions.ass" kokoro am_puck 0.2
+  WORDS_OUT="$WORK/words.json" TTS_SPEED=1.05 "$TTS_PY" "$HERE/tts_timed.py" "$WORK/lines.json" "$DUR" "$WORK/voice.wav" "$WORK/captions.ass" kokoro am_puck 0.2
 fi
 echo "::endgroup::"
 
@@ -86,6 +86,18 @@ if [ -n "$OUTRO_ID" ] && prep_clip "$WORK/outro_raw" "$WORK/outro.mkv"; then ODU
 TI=$(awk -v d="$IDUR" 'BEGIN { t = 0.7; if (d < 2) t = 0.3; printf "%.2f", t }')
 TO=$(awk -v d="$ODUR" 'BEGIN { t = 1.0; if (d < 2.5) t = 0.4; printf "%.2f", t }')
 echo "Intro ${IDUR}s, outro ${ODUR}s, music: ${MUSIC_ID:+yes}"
+# Chapter times shift by how long the intro shows before the video starts.
+INTRO_S=$(awk -v d="$IDUR" -v t="$TI" -v i="$INTRO_ID" 'BEGIN { printf "%.2f", (i != "" ? d - t : 0) }')
+
+echo "::group::Subtitles and chapter cards"
+printf '%s' "$PAYLOAD" > "$WORK/payload.json"
+SUBS_VF=""
+if [ -s "$WORK/words.json" ] && python3 "$HERE/long_subs.py" "$WORK/words.json" "$WORK/payload.json" "$WORK/long.ass" "$OUT_DIR/subs.srt" "$INTRO_S"; then
+  SUBS_VF=",subtitles=$WORK/long.ass:fontsdir=/usr/share/fonts/truetype/dejavu"
+else
+  echo "::warning::Could not make subtitles, rendering without them."
+fi
+echo "::endgroup::"
 
 echo "::group::Mix and render the full video (intro + video + outro in one pass)"
 INS=(-i "$WORK/in.mp4" -i "$WORK/voice.wav"); N=2
@@ -97,9 +109,9 @@ if [ -n "$OUTRO_ID" ]; then INS+=(-i "$WORK/outro.mkv"); OI=$N; N=$((N+1)); fi
 
 # --- main video: 16:9 + logo
 if [ -n "$WM_ID" ]; then
-  FC="[0:v]${BASE},trim=0:${DUR},setpts=PTS-STARTPTS[vb];movie=$WORK/logo.png,scale=w=200:h=110:force_original_aspect_ratio=decrease,format=rgba,colorchannelmixer=aa=0.75[wm];[vb][wm]overlay=W-w-40:36:eof_action=repeat,format=yuv420p[vm]"
+  FC="[0:v]${BASE},trim=0:${DUR},setpts=PTS-STARTPTS[vb];movie=$WORK/logo.png,scale=w=200:h=110:force_original_aspect_ratio=decrease,format=rgba,colorchannelmixer=aa=0.75[wm];[vb][wm]overlay=W-w-40:36:eof_action=repeat${SUBS_VF},format=yuv420p[vm]"
 else
-  FC="[0:v]${BASE},trim=0:${DUR},setpts=PTS-STARTPTS[vm]"
+  FC="[0:v]${BASE},trim=0:${DUR},setpts=PTS-STARTPTS${SUBS_VF}[vm]"
 fi
 # --- main sound: voice on top, game and music dip while you talk
 FADE_OUT=$(awk -v d="$DUR" 'BEGIN { printf "%.2f", (d > 8 ? d - 5 : 0) }')
@@ -113,7 +125,7 @@ else
 fi
 if [ -n "$MI" ]; then
   # Calm music bed: quiet, fades in and out, ducks further under the voice.
-  FC+=";[${MI}:a]${AFMT},atrim=0:${DUR},volume=0.16,afade=in:st=0:d=3,afade=out:st=${FADE_OUT}:d=5[m];[m][sp3]sidechaincompress=threshold=0.015:ratio=6:attack=30:release=800[md]"
+  FC+=";[${MI}:a]${AFMT},atrim=0:${DUR},volume=0.09,afade=in:st=0:d=3,afade=out:st=${FADE_OUT}:d=5[m];[m][sp3]sidechaincompress=threshold=0.01:ratio=10:attack=20:release=900[md]"
   MIX+="[md]"; K=$((K+1))
 else
   FC+=";[sp3]anullsink"
@@ -139,8 +151,6 @@ ffmpeg -nostdin -hide_banner -loglevel error -stats -y "${INS[@]}" \
   -c:v libx264 -preset veryfast -crf 22 -maxrate 8M -bufsize 16M -g "$GOP" -pix_fmt yuv420p \
   -c:a aac -b:a 192k -ar 48000 -ac 2 -movflags +faststart "$WORK/final.mp4"
 FINAL="$WORK/final.mp4"
-# Chapter times shift by how long the intro shows before the video starts.
-INTRO_S=$(awk -v d="$IDUR" -v t="$TI" -v i="$INTRO_ID" 'BEGIN { printf "%.2f", (i != "" ? d - t : 0) }')
 echo "::endgroup::"
 ls -lh "$FINAL"
 

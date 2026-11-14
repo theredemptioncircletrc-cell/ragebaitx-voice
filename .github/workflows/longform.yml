@@ -142,6 +142,7 @@ jobs:
         run: |
           jq -n --arg stage render --arg status "$STATUS" --arg drive_id "${DRIVE_ID:-}" --arg size_mb "${SIZE_MB:-0}" \
             --arg intro_s "${INTRO_S:-0}" --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" --arg payload "$PAYLOAD" \
+            --rawfile srt <(cat out/subs.srt 2>/dev/null || true) \
             '{stage:$stage, status:$status, drive_id:$drive_id, size_mb:$size_mb, intro_s:($intro_s|tonumber? // 0),
-              run_url:$run_url, job_id:$job_id, meta:(($payload|fromjson? // {}).meta // {})}' \
+              run_url:$run_url, job_id:$job_id, srt:$srt, meta:(($payload|fromjson? // {}).meta // {})}' \
           | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
