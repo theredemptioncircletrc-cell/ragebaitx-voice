@@ -34,6 +34,14 @@ echo "::endgroup::"
 echo "::group::Game sound"
 ffmpeg -nostdin -hide_banner -loglevel error -y -i "$WORK/in.mp4" -vn -ac 2 -ar 44100 "$WORK/game.wav" 2>/dev/null || HAS_AUDIO=false
 GAME_WAV="$WORK/game.wav"
+if [ "$HAS_AUDIO" = "true" ]; then
+  # A silent sound track (muted VOD) counts as no game sound: nothing to remove, nothing to mix.
+  PEAK=$(ffmpeg -nostdin -hide_banner -i "$WORK/game.wav" -af volumedetect -f null - 2>&1 | sed -n 's/.*max_volume: \(-*[0-9.]*\) dB.*/\1/p' | tail -1)
+  if [ -z "$PEAK" ] || awk -v p="$PEAK" 'BEGIN { exit !(p < -60) }'; then
+    echo "::warning::The video's sound track is silent (max ${PEAK:-?} dB), so there is no game sound to keep."
+    HAS_AUDIO=false
+  fi
+fi
 if [ "$HAS_AUDIO" = "true" ] && [ "$(field remove_voice false)" = "true" ] && [ -x "${DEMUCS_PY:-}" ]; then
   echo "Removing the original talking (this takes a while on long videos)..."
   if "$DEMUCS_PY" -m demucs --two-stems=vocals -n htdemucs -d cpu -o "$WORK/sep" "$WORK/game.wav" && [ -s "$WORK/sep/htdemucs/game/no_vocals.wav" ]; then
