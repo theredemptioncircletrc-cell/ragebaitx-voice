@@ -96,14 +96,14 @@ echo "::group::Mix and add captions"
 HOOK=$(printf '%s' "$PAYLOAD" | jq -r '.hook_text // ""' | tr '\n' ' ' | sed 's/[{}\\]//g' | cut -c1-90)
 if [ -n "$HOOK" ]; then
   HOOK_END=$(awk -v d="$DUR" 'BEGIN { h=int(d/3600); m=int((d%3600)/60); s=d-h*3600-m*60; printf "%d:%02d:%05.2f", h, m, s }')
-  sed -i '/^Style: Cap,/a Style: Hook,DejaVu Sans,74,\&H0000E5FF,\&H00FFFFFF,\&H00000000,\&H96000000,-1,0,0,0,100,100,0,0,1,7,3,8,70,70,190,1' "$WORK/captions.ass"
+  sed -i '/^Style: Cap,/a Style: Hook,DejaVu Sans,58,\&H0000E5FF,\&H00FFFFFF,\&H00000000,\&H96000000,-1,0,0,0,100,100,0,0,1,7,3,8,70,70,190,1' "$WORK/captions.ass"
   printf 'Dialogue: 1,0:00:00.00,%s,Hook,,0,0,0,,{\\fscx40\\fscy40\\t(80,260,\\fscx114\\fscy114)\\t(260,360,\\fscx100\\fscy100)}%s\n' "$HOOK_END" "$HOOK" >> "$WORK/captions.ass"
 fi
 if [ "$OUTRO" != "0" ]; then
   T0=$(awk -v d="$DUR" 'BEGIN { m=int(d/60); s=d-m*60; printf "0:%02d:%05.2f", m, s }')
   T1=$(awk -v d="$TOTAL" 'BEGIN { m=int(d/60); s=d-m*60; printf "0:%02d:%05.2f", m, s }')
-  sed -i '/^Style: Cap,/a Style: Outro,DejaVu Sans,84,\&H00FFFFFF,\&H00FFFFFF,\&H00000000,\&H00000000,-1,0,0,0,100,100,0,0,1,8,4,5,80,80,0,1' "$WORK/captions.ass"
-  printf 'Dialogue: 2,%s,%s,Outro,,0,0,0,,{\\fscx30\\fscy30\\t(0,200,\\fscx110\\fscy110)\\t(200,300,\\fscx100\\fscy100)\\c&H0000E5FF&}%s\\N{\\fs52\\c&HFFFFFF&}COMMENT BELOW\n' "$T0" "$T1" "$OUTRO_TEXT" >> "$WORK/captions.ass"
+  sed -i '/^Style: Cap,/a Style: Outro,DejaVu Sans,68,\&H00FFFFFF,\&H00FFFFFF,\&H00000000,\&H00000000,-1,0,0,0,100,100,0,0,1,8,4,5,80,80,0,1' "$WORK/captions.ass"
+  printf 'Dialogue: 2,%s,%s,Outro,,0,0,0,,{\\fscx30\\fscy30\\t(0,200,\\fscx110\\fscy110)\\t(200,300,\\fscx100\\fscy100)\\c&H0000E5FF&}%s\\N{\\fs42\\c&HFFFFFF&}COMMENT BELOW\n' "$T0" "$T1" "$OUTRO_TEXT" >> "$WORK/captions.ass"
 fi
 SUBS="subtitles=$WORK/captions.ass:fontsdir=/usr/share/fonts/truetype/dejavu"
 INTRO=false
