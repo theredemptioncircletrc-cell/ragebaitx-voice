@@ -30,9 +30,9 @@ jq -c '.candidates[]' "$OUT_DIR/candidates.json" | while read -r c; do
   ffmpeg -nostdin -hide_banner -loglevel error -y -ss "$START" -i "$WORK/long.mp4" -t "$LEN" \
     -map 0:v:0 -map '0:a:0?' -c:v libx264 -preset veryfast -crf 19 -pix_fmt yuv420p \
     -c:a aac -b:a 192k -movflags +faststart "$OUT_DIR/clips/$FILE"
-  FPS=$(awk -v d="$LEN" 'BEGIN { printf "%.5f", 12 / (d + 0.5) }')
+  FPS=$(awk -v d="$LEN" 'BEGIN { printf "%.5f", 20 / (d + 0.5) }')
   ffmpeg -nostdin -hide_banner -loglevel error -y -i "$OUT_DIR/clips/$FILE" \
-    -vf "fps=${FPS},scale=400:-2,drawtext=fontfile=${FONT}:text='%{eif\:t\:d}s':x=10:y=10:fontsize=30:fontcolor=yellow:box=1:boxcolor=black@0.6,tile=4x3" \
+    -vf "fps=${FPS},scale=360:-2,drawtext=fontfile=${FONT}:text='%{eif\:t\:d}s':x=10:y=10:fontsize=30:fontcolor=yellow:box=1:boxcolor=black@0.6,tile=5x4" \
     -frames:v 1 -q:v 4 "$OUT_DIR/grids/grid_${ID}.jpg"
   echo "$ID ok"
 done
