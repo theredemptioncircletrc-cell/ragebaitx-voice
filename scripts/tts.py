@@ -59,7 +59,9 @@ def write_ass(words, path, offset):
     lines = []
     for i, g in enumerate(groups):
         start = g[0][1] + offset
-        end = (groups[i + 1][0][1] + offset) if i + 1 < len(groups) else g[-1][2] + offset + 0.3
+        end = g[-1][2] + offset + 0.35  # leave the screen clear during pauses
+        if i + 1 < len(groups):
+            end = min(end if end > start + 0.4 else start + 0.4, groups[i + 1][0][1] + offset)
         text = " ".join(re.sub(r"[{}\\]", "", w[0]) for w in g).upper()
         text = re.sub(r"[.,]+$", "", text)
         # Pop in with a little bounce; shouted/question moments go yellow.

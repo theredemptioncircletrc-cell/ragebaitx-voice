@@ -63,14 +63,30 @@ fi
 echo "::group::Read the script (ElevenLabs or free voice)"
 ELEVEN_VOICE="$(field eleven_voice "")"; ELEVEN_VOICE="${ELEVEN_VOICE:-${ELEVENLABS_VOICE_ID:-}}"
 USED_ELEVEN=false
-if [ -n "${ELEVENLABS_API_KEY:-}" ] && [ -n "$ELEVEN_VOICE" ] && [ "$(field use_eleven true)" = "true" ]; then
+TIMED=false
+printf '%s' "$PAYLOAD" | jq -c '.lines // []' > "$WORK/lines.json"
+if [ "$(jq 'length' "$WORK/lines.json")" -gt 0 ]; then
+  # Timed lines: every line is placed on the second it talks about, so the voice never lags the video.
+  ENGINE=kokoro; VID="$VOICE"
+  if [ -n "${ELEVENLABS_API_KEY:-}" ] && [ -n "$ELEVEN_VOICE" ] && [ "$(field use_eleven true)" = "true" ]; then ENGINE=eleven; VID="$ELEVEN_VOICE"; fi
+  if TTS_SPEED="$(field speed 1.05)" "$TTS_PY" "$HERE/tts_timed.py" "$WORK/lines.json" "$SPEECH_ROOM" "$WORK/tts.wav" "$WORK/captions.ass" "$ENGINE" "$VID" 0.15; then
+    TIMED=true; OFFSET=0
+    [ "$ENGINE" = "eleven" ] && USED_ELEVEN=true
+  elif [ "$ENGINE" = "eleven" ] && TTS_SPEED="$(field speed 1.05)" "$TTS_PY" "$HERE/tts_timed.py" "$WORK/lines.json" "$SPEECH_ROOM" "$WORK/tts.wav" "$WORK/captions.ass" kokoro "$VOICE" 0.15; then
+    echo "::warning::ElevenLabs failed, used the free voice with timed lines."
+    TIMED=true; OFFSET=0
+  else
+    echo "::warning::Timed lines failed, reading the script in one go."
+  fi
+fi
+if [ "$TIMED" != "true" ] && [ -n "${ELEVENLABS_API_KEY:-}" ] && [ -n "$ELEVEN_VOICE" ] && [ "$(field use_eleven true)" = "true" ]; then
   if "$TTS_PY" "$HERE/tts_eleven.py" "$WORK/script.txt" "$SPEECH_ROOM" "$WORK/tts.wav" "$WORK/captions.ass" "$ELEVEN_VOICE" "$OFFSET"; then
     USED_ELEVEN=true
   else
     echo "::warning::ElevenLabs failed, falling back to the free voice."
   fi
 fi
-if [ "$USED_ELEVEN" != "true" ]; then
+if [ "$TIMED" != "true" ] && [ "$USED_ELEVEN" != "true" ]; then
   sed -i 's/\[[^]]*\]//g' "$WORK/script.txt"   # audio tags are only for ElevenLabs
   TTS_SPEED="$(field speed 1.05)" "$TTS_PY" "$HERE/tts.py" "$WORK/script.txt" "$SPEECH_ROOM" "$WORK/tts.wav" "$WORK/captions.ass" "$VOICE" "$OFFSET"
 fi
