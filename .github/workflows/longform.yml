@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       stage:
-        description: "scan or render"
+        description: "scan, render or post"
         required: true
         default: "scan"
       video_url:
@@ -145,4 +145,38 @@ jobs:
             --rawfile srt <(cat out/subs.srt 2>/dev/null || true) \
             '{stage:$stage, status:$status, drive_id:$drive_id, size_mb:$size_mb, intro_s:($intro_s|tonumber? // 0),
               run_url:$run_url, job_id:$job_id, srt:$srt, meta:(($payload|fromjson? // {}).meta // {})}' \
+          | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
+
+  post:
+    # Sends a finished long video from Drive to YouTube through an upload link made by n8n.
+    if: inputs.stage == 'post'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Upload to YouTube
+        id: post
+        env:
+          VIDEO_URL: ${{ inputs.video_url }}
+          PAYLOAD: ${{ inputs.payload }}
+        run: |
+          source scripts/download.sh
+          download_clip "$VIDEO_URL" video.mp4
+          UPLOAD_URL=$(printf '%s' "$PAYLOAD" | jq -r '.upload_url // empty')
+          [ -n "$UPLOAD_URL" ] || { echo "No upload link"; exit 1; }
+          curl -fsS --retry 3 --retry-delay 10 -X PUT -H "Content-Type: video/mp4" --upload-file video.mp4 "$UPLOAD_URL" -o yt.json
+          cat yt.json
+          echo "video_id=$(jq -r '.id // empty' yt.json)" >> "$GITHUB_OUTPUT"
+      - name: Tell n8n the result
+        if: always() && inputs.callback_url != ''
+        env:
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          STATUS: ${{ job.status }}
+          VIDEO_ID: ${{ steps.post.outputs.video_id }}
+          JOB_ID: ${{ inputs.job_id }}
+          PAYLOAD: ${{ inputs.payload }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -n --arg stage post --arg status "$STATUS" --arg video_id "${VIDEO_ID:-}" --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" --arg payload "$PAYLOAD" \
+            '{stage:$stage, status:$status, video_id:$video_id, run_url:$run_url, job_id:$job_id, row_id:(($payload|fromjson? // {}).row_id // null), privacy:(($payload|fromjson? // {}).privacy // "")}' \
           | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
