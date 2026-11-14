@@ -122,6 +122,18 @@ if [ "$OUTRO" != "0" ]; then
   printf 'Dialogue: 2,%s,%s,Outro,,0,0,0,,{\\fscx30\\fscy30\\t(0,200,\\fscx110\\fscy110)\\t(200,300,\\fscx100\\fscy100)\\c&H0000E5FF&}%s\\N{\\fs42\\c&HFFFFFF&}COMMENT BELOW\n' "$T0" "$T1" "$OUTRO_TEXT" >> "$WORK/captions.ass"
 fi
 SUBS="subtitles=$WORK/captions.ass:fontsdir=/usr/share/fonts/truetype/dejavu"
+# Optional watermark: your logo from Drive, small and slightly see-through at the top centre.
+WM=""
+WM_ID="$(field watermark_id "")"
+if [ -n "$WM_ID" ] && [ "$(field vertical false)" = "true" ]; then
+  if curl -fsSL --retry 3 -o "$WORK/logo_raw" "https://drive.usercontent.google.com/download?id=${WM_ID}&export=download&confirm=t" \
+     && ffmpeg -nostdin -hide_banner -loglevel error -y -i "$WORK/logo_raw" -frames:v 1 "$WORK/logo.png"; then
+    WM="null[wmbase];movie=$WORK/logo.png,scale=w=230:h=130:force_original_aspect_ratio=decrease,format=rgba,colorchannelmixer=aa=0.8[wmlogo];[wmbase][wmlogo]overlay=(W-w)/2:40:eof_action=repeat,"
+    echo "Watermark added."
+  else
+    echo "::warning::Could not load the watermark logo, making the clip without it."
+  fi
+fi
 INTRO=false
 PUNCH=""
 FREEZE=""
@@ -141,11 +153,11 @@ if [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ] && [ 
   # Full-screen 9:16 crop that glides to where the AI saw the action.
   CROP=$(python3 "$HERE/cropexpr.py" "$VW" "$VH" "$FOCUS")
   echo "Follow-the-action crop: $FOCUS"
-  VF="${FREEZE}${CROP},scale=1080:1920:flags=lanczos,setsar=1,${PUNCH}$SUBS"
+  VF="${FREEZE}${CROP},scale=1080:1920:flags=lanczos,setsar=1,${PUNCH}${WM}$SUBS"
 elif [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ]; then
   # Landscape gameplay -> 9:16 Short: blurred copy fills the screen, the game sits a little
   # zoomed in the middle, hook text above it, captions below it.
-  VF="${FREEZE}split[m][b];[b]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:3,eq=brightness=-0.12[bg];[m]scale=1296:-2,crop=1080:ih[fg];[bg][fg]overlay=(W-w)/2:520,setsar=1,${PUNCH}$SUBS"
+  VF="${FREEZE}split[m][b];[b]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:3,eq=brightness=-0.12[bg];[m]scale=1296:-2,crop=1080:ih[fg];[bg][fg]overlay=(W-w)/2:520,setsar=1,${PUNCH}${WM}$SUBS"
 else
   VF="scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,$SUBS"
 fi
