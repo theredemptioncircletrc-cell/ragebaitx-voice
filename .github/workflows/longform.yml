@@ -135,10 +135,13 @@ jobs:
           STATUS: ${{ job.status }}
           DRIVE_ID: ${{ steps.render.outputs.drive_id }}
           SIZE_MB: ${{ steps.render.outputs.size_mb }}
+          INTRO_S: ${{ steps.render.outputs.intro_s }}
           JOB_ID: ${{ inputs.job_id }}
+          PAYLOAD: ${{ inputs.payload }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           jq -n --arg stage render --arg status "$STATUS" --arg drive_id "${DRIVE_ID:-}" --arg size_mb "${SIZE_MB:-0}" \
-            --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" \
-            '{stage:$stage, status:$status, drive_id:$drive_id, size_mb:$size_mb, run_url:$run_url, job_id:$job_id}' \
+            --arg intro_s "${INTRO_S:-0}" --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" --arg payload "$PAYLOAD" \
+            '{stage:$stage, status:$status, drive_id:$drive_id, size_mb:$size_mb, intro_s:($intro_s|tonumber? // 0),
+              run_url:$run_url, job_id:$job_id, meta:(($payload|fromjson? // {}).meta // {})}' \
           | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"

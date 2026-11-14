@@ -73,6 +73,7 @@ ffmpeg -nostdin -hide_banner -loglevel error -stats -y -i "$WORK/in.mp4" "${AUDI
 echo "::endgroup::"
 
 FINAL="$WORK/main.mp4"
+INTRO_S=0
 if [ -n "$INTRO_ID" ]; then
   echo "::group::Put the intro in front"
   if ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$WORK/intro_raw" | grep -q .; then
@@ -86,6 +87,7 @@ if [ -n "$INTRO_ID" ]; then
   printf "file '%s'\nfile '%s'\n" "$WORK/intro.mp4" "$WORK/main.mp4" > "$WORK/list.txt"
   ffmpeg -nostdin -hide_banner -loglevel error -y -f concat -safe 0 -i "$WORK/list.txt" -c copy -movflags +faststart "$WORK/final.mp4"
   FINAL="$WORK/final.mp4"
+  INTRO_S=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$WORK/intro.mp4")
   echo "::endgroup::"
 fi
 ls -lh "$FINAL"
@@ -100,3 +102,4 @@ jq -r '.id // empty' "$OUT_DIR/drive.json" > "$OUT_DIR/drive_id.txt"
 echo "::endgroup::"
 echo "drive_id=$(cat "$OUT_DIR/drive_id.txt")" >> "$GITHUB_OUTPUT"
 echo "size_mb=$(du -m "$FINAL" | cut -f1)" >> "$GITHUB_OUTPUT"
+echo "intro_s=${INTRO_S}" >> "$GITHUB_OUTPUT"
