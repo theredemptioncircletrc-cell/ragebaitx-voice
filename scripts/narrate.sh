@@ -39,6 +39,12 @@ DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$WORK/in.mp4")
 HAS_AUDIO=false
 if ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$WORK/in.mp4" | grep -q .; then HAS_AUDIO=true; fi
 echo "Duration ${DUR}s, game audio: $HAS_AUDIO"
+# Optional ending: freeze on the last frame with a "comment below" question card.
+OUTRO_TEXT=$(printf '%s' "$PAYLOAD" | jq -r '.outro_text // ""' | tr '\n' ' ' | sed 's/[{}\\]//g' | cut -c1-70)
+OUTRO=0
+if [ -n "$OUTRO_TEXT" ] && [ "$(field vertical false)" = "true" ]; then OUTRO=2.8; fi
+TOTAL=$(awk -v d="$DUR" -v o="$OUTRO" 'BEGIN { printf "%.2f", d + o }')
+SPEECH_ROOM=$(awk -v d="$DUR" -v o="$OUTRO" 'BEGIN { printf "%.2f", d + o * 0.75 }')
 echo "::endgroup::"
 
 # Optional: remove anyone talking in the original clip (streamer mic, Opus narrator), keep the game sound.
@@ -58,7 +64,7 @@ echo "::group::Read the script (ElevenLabs or free voice)"
 ELEVEN_VOICE="$(field eleven_voice "")"; ELEVEN_VOICE="${ELEVEN_VOICE:-${ELEVENLABS_VOICE_ID:-}}"
 USED_ELEVEN=false
 if [ -n "${ELEVENLABS_API_KEY:-}" ] && [ -n "$ELEVEN_VOICE" ] && [ "$(field use_eleven true)" = "true" ]; then
-  if "$TTS_PY" "$HERE/tts_eleven.py" "$WORK/script.txt" "$DUR" "$WORK/tts.wav" "$WORK/captions.ass" "$ELEVEN_VOICE" "$OFFSET"; then
+  if "$TTS_PY" "$HERE/tts_eleven.py" "$WORK/script.txt" "$SPEECH_ROOM" "$WORK/tts.wav" "$WORK/captions.ass" "$ELEVEN_VOICE" "$OFFSET"; then
     USED_ELEVEN=true
   else
     echo "::warning::ElevenLabs failed, falling back to the free voice."
@@ -66,7 +72,7 @@ if [ -n "${ELEVENLABS_API_KEY:-}" ] && [ -n "$ELEVEN_VOICE" ] && [ "$(field use_
 fi
 if [ "$USED_ELEVEN" != "true" ]; then
   sed -i 's/\[[^]]*\]//g' "$WORK/script.txt"   # audio tags are only for ElevenLabs
-  TTS_SPEED="$(field speed 1.05)" "$TTS_PY" "$HERE/tts.py" "$WORK/script.txt" "$DUR" "$WORK/tts.wav" "$WORK/captions.ass" "$VOICE" "$OFFSET"
+  TTS_SPEED="$(field speed 1.05)" "$TTS_PY" "$HERE/tts.py" "$WORK/script.txt" "$SPEECH_ROOM" "$WORK/tts.wav" "$WORK/captions.ass" "$VOICE" "$OFFSET"
 fi
 echo "::endgroup::"
 
@@ -93,13 +99,24 @@ if [ -n "$HOOK" ]; then
   sed -i '/^Style: Cap,/a Style: Hook,DejaVu Sans,74,\&H0000E5FF,\&H00FFFFFF,\&H00000000,\&H96000000,-1,0,0,0,100,100,0,0,1,7,3,8,70,70,190,1' "$WORK/captions.ass"
   printf 'Dialogue: 1,0:00:00.00,%s,Hook,,0,0,0,,{\\fscx40\\fscy40\\t(80,260,\\fscx114\\fscy114)\\t(260,360,\\fscx100\\fscy100)}%s\n' "$HOOK_END" "$HOOK" >> "$WORK/captions.ass"
 fi
+if [ "$OUTRO" != "0" ]; then
+  T0=$(awk -v d="$DUR" 'BEGIN { m=int(d/60); s=d-m*60; printf "0:%02d:%05.2f", m, s }')
+  T1=$(awk -v d="$TOTAL" 'BEGIN { m=int(d/60); s=d-m*60; printf "0:%02d:%05.2f", m, s }')
+  sed -i '/^Style: Cap,/a Style: Outro,DejaVu Sans,84,\&H00FFFFFF,\&H00FFFFFF,\&H00000000,\&H00000000,-1,0,0,0,100,100,0,0,1,8,4,5,80,80,0,1' "$WORK/captions.ass"
+  printf 'Dialogue: 2,%s,%s,Outro,,0,0,0,,{\\fscx30\\fscy30\\t(0,200,\\fscx110\\fscy110)\\t(200,300,\\fscx100\\fscy100)\\c&H0000E5FF&}%s\\N{\\fs52\\c&HFFFFFF&}COMMENT BELOW\n' "$T0" "$T1" "$OUTRO_TEXT" >> "$WORK/captions.ass"
+fi
 SUBS="subtitles=$WORK/captions.ass:fontsdir=/usr/share/fonts/truetype/dejavu"
 INTRO=false
 PUNCH=""
+FREEZE=""
+if [ "$OUTRO" != "0" ]; then
+  FREEZE="tpad=stop_mode=clone:stop_duration=${OUTRO},"
+  PUNCH="eq=brightness=-0.22:saturation=0.6:enable='gte(t\,${DUR})',"
+fi
 if [ "$(field vertical false)" = "true" ] && [ "$(field intro_fx true)" = "true" ]; then
   # First 0.4 s: white flash + zoom punch into the action (text is added after, so it stays sharp).
   INTRO=true
-  PUNCH="scale=w='trunc(1080*(1+0.14*max(0\,1-t/0.4))/2)*2':h=-2:eval=frame,crop=1080:1920,fade=in:st=0:d=0.25:color=white,"
+  PUNCH="${PUNCH}scale=w='trunc(1080*(1+0.14*max(0\,1-t/0.4))/2)*2':h=-2:eval=frame,crop=1080:1920,fade=in:st=0:d=0.25:color=white,"
 fi
 VW=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$WORK/in.mp4")
 VH=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$WORK/in.mp4")
@@ -108,20 +125,22 @@ if [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ] && [ 
   # Full-screen 9:16 crop that glides to where the AI saw the action.
   CROP=$(python3 "$HERE/cropexpr.py" "$VW" "$VH" "$FOCUS")
   echo "Follow-the-action crop: $FOCUS"
-  VF="${CROP},scale=1080:1920:flags=lanczos,setsar=1,${PUNCH}$SUBS"
+  VF="${FREEZE}${CROP},scale=1080:1920:flags=lanczos,setsar=1,${PUNCH}$SUBS"
 elif [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ]; then
   # Landscape gameplay -> 9:16 Short: blurred copy fills the screen, the game sits a little
   # zoomed in the middle, hook text above it, captions below it.
-  VF="split[m][b];[b]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:3,eq=brightness=-0.12[bg];[m]scale=1296:-2,crop=1080:ih[fg];[bg][fg]overlay=(W-w)/2:520,setsar=1,${PUNCH}$SUBS"
+  VF="${FREEZE}split[m][b];[b]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:3,eq=brightness=-0.12[bg];[m]scale=1296:-2,crop=1080:ih[fg];[bg][fg]overlay=(W-w)/2:520,setsar=1,${PUNCH}$SUBS"
 else
   VF="scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,$SUBS"
 fi
 DELAY_MS=$(awk -v o="$OFFSET" 'BEGIN { printf "%d", o * 1000 }')
 VOICE_CHAIN="[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,adelay=${DELAY_MS}|${DELAY_MS},apad,volume=1.15"
 EXTRA_IN=()
+GAME_TAIL=""
+if [ "$OUTRO" != "0" ]; then GAME_TAIL=",apad,afade=out:st=$(awk -v d="$DUR" 'BEGIN { printf "%.2f", d - 0.3 }'):d=2.4"; fi
 if [ -n "${GAME_WAV:-}" ]; then EXTRA_IN=(-i "$GAME_WAV"); GAME_SRC="2:a"; fi
 if [ "$HAS_AUDIO" = "true" ]; then
-  FILTER="${VOICE_CHAIN},asplit=2[v1][v2];[${GAME_SRC}]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${GAME_VOLUME}[g];[g][v2]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=400[gd];[gd][v1]amix=inputs=2:duration=first:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]"
+  FILTER="${VOICE_CHAIN},asplit=2[v1][v2];[${GAME_SRC}]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${GAME_VOLUME}${GAME_TAIL}[g];[g][v2]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=400[gd];[gd][v1]amix=inputs=2:duration=first:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]"
 else
   FILTER="${VOICE_CHAIN},loudnorm=I=-14:TP=-1.5:LRA=11[a]"
 fi
@@ -135,7 +154,7 @@ ffmpeg -nostdin -hide_banner -loglevel error -y \
   -i "$WORK/in.mp4" -i "$VOICE_WAV" "${EXTRA_IN[@]}" \
   -filter_complex "$FILTER" -map 0:v:0 -map "[a]" -vf "$VF" \
   -c:v libx264 -preset veryfast -crf 23 -maxrate 5M -bufsize 10M -pix_fmt yuv420p \
-  -c:a aac -b:a 192k -ar 48000 -t "$DUR" -movflags +faststart "$OUT_FILE"
+  -c:a aac -b:a 192k -ar 48000 -t "$TOTAL" -movflags +faststart "$OUT_FILE"
 ls -lh "$OUT_FILE"
 echo "::endgroup::"
 echo "Done: $OUT_FILE"
