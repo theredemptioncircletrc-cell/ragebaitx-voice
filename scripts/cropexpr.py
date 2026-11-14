@@ -37,7 +37,7 @@ def main():
         (t0, x0), (t1, x1) = px[i], px[i + 1]
         if t1 <= t0:
             continue
-        seg = f"{x0:.1f}+({x1 - x0:.1f})*(t-{t0:.2f})/{t1 - t0:.2f}"
+        seg = f"{x0:.1f}+({x1 - x0:.1f})*(t-({t0:.2f}))/{t1 - t0:.2f}"
         expr = f"if(lt(t,{t1:.2f}),{seg},{expr})"
     expr = f"if(lt(t,{px[0][0]:.2f}),{px[0][1]:.1f},{expr})"
     print(f"crop={cw}:{ih}:" + expr.replace(",", "\\,") + ":0")
