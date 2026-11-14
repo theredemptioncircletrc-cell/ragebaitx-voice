@@ -31,6 +31,55 @@ INTRO_ID=$(field intro_id ""); OUTRO_ID=$(field outro_id ""); MUSIC_ID=$(field m
 if [ -n "$WM_ID" ] && drive_dl "$WM_ID" "$WORK/logo_raw" && ffmpeg -nostdin -loglevel error -y -i "$WORK/logo_raw" -frames:v 1 "$WORK/logo.png"; then :; else WM_ID=""; fi
 echo "::endgroup::"
 
+echo "::group::Edit (cut to the best parts)"
+# payload.segments = [[start, end], ...] in seconds of the original video, in order.
+# Each part is cut, then they are joined with short varied transitions (fade, slide, dip to black).
+SEG_JSON=$(printf '%s' "$PAYLOAD" | jq -c '[.segments // [] | .[] | select(length == 2) | map(tonumber)] | map(select(.[1] - .[0] >= 2))')
+NSEG=$(jq length <<<"$SEG_JSON")
+XT=0.5
+if [ "$NSEG" -ge 1 ]; then
+  CUTBASE="scale=1920:1080:force_original_aspect_ratio=decrease:flags=lanczos,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${FPS},format=yuv420p,settb=AVTB"
+  CUT_INS=(); i=0
+  while [ "$i" -lt "$NSEG" ]; do
+    SS=$(jq -r ".[$i][0]" <<<"$SEG_JSON"); EE=$(jq -r ".[$i][1]" <<<"$SEG_JSON")
+    LEN=$(awk -v a="$SS" -v b="$EE" 'BEGIN { printf "%.3f", b - a }')
+    if [ "$HAS_AUDIO" = "true" ]; then
+      ffmpeg -nostdin -hide_banner -loglevel error -y -ss "$SS" -i "$WORK/in.mp4" -t "$LEN" -map 0:v:0 -map 0:a:0 \
+        -vf "$CUTBASE" -af "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo" -c:v libx264 -preset veryfast -crf 17 -c:a pcm_s16le "$WORK/seg_$i.mkv"
+    else
+      ffmpeg -nostdin -hide_banner -loglevel error -y -ss "$SS" -i "$WORK/in.mp4" -f lavfi -i "anullsrc=r=48000:cl=stereo" -t "$LEN" -map 0:v:0 -map 1:a:0 \
+        -vf "$CUTBASE" -c:v libx264 -preset veryfast -crf 17 -c:a pcm_s16le "$WORK/seg_$i.mkv"
+    fi
+    CUT_INS+=(-i "$WORK/seg_$i.mkv"); i=$((i+1))
+  done
+  if [ "$NSEG" -eq 1 ]; then
+    ffmpeg -nostdin -hide_banner -loglevel error -y -i "$WORK/seg_0.mkv" -c:v copy -c:a aac -b:a 256k "$WORK/edited.mp4"
+  else
+    TRANS=(fade smoothleft fadeblack fade slideright dissolve fade smoothright)
+    FCC=""; V="[0:v]"; A="[0:a]"; ACC=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$WORK/seg_0.mkv")
+    i=1
+    while [ "$i" -lt "$NSEG" ]; do
+      OFF=$(awk -v a="$ACC" -v t="$XT" 'BEGIN { printf "%.3f", a - t }')
+      TR=${TRANS[$(( (i-1) % ${#TRANS[@]} ))]}
+      FCC+="${V}[$i:v]xfade=transition=${TR}:duration=${XT}:offset=${OFF}[cv$i];${A}[$i:a]acrossfade=d=${XT}:c1=tri:c2=tri[ca$i];"
+      V="[cv$i]"; A="[ca$i]"
+      L=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$WORK/seg_$i.mkv")
+      ACC=$(awk -v a="$ACC" -v l="$L" -v t="$XT" 'BEGIN { printf "%.3f", a + l - t }')
+      i=$((i+1))
+    done
+    ffmpeg -nostdin -hide_banner -loglevel error -stats -y "${CUT_INS[@]}" -filter_complex "${FCC%;}" -map "$V" -map "$A" \
+      -c:v libx264 -preset veryfast -crf 18 -pix_fmt yuv420p -c:a aac -b:a 256k "$WORK/edited.mp4"
+  fi
+  mv "$WORK/edited.mp4" "$WORK/in.mp4"; rm -f "$WORK"/seg_*.mkv
+  DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$WORK/in.mp4")
+  HAS_AUDIO=false
+  if ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$WORK/in.mp4" | grep -q .; then HAS_AUDIO=true; fi
+  echo "Edited down to ${NSEG} parts, new length ${DUR}s"
+else
+  echo "No edit list, keeping the full video."
+fi
+echo "::endgroup::"
+
 echo "::group::Game sound"
 ffmpeg -nostdin -hide_banner -loglevel error -y -i "$WORK/in.mp4" -vn -ac 2 -ar 44100 "$WORK/game.wav" 2>/dev/null || HAS_AUDIO=false
 GAME_WAV="$WORK/game.wav"
