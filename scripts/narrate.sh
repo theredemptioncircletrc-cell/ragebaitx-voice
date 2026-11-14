@@ -82,7 +82,13 @@ fi
 SUBS="subtitles=$WORK/captions.ass:fontsdir=/usr/share/fonts/truetype/dejavu"
 VW=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$WORK/in.mp4")
 VH=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$WORK/in.mp4")
-if [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ]; then
+FOCUS=$(printf '%s' "$PAYLOAD" | jq -c '.focus // []')
+if [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ] && [ "$(field framing blur)" = "follow" ]; then
+  # Full-screen 9:16 crop that glides to where the AI saw the action.
+  CROP=$(python3 "$HERE/cropexpr.py" "$VW" "$VH" "$FOCUS")
+  echo "Follow-the-action crop: $FOCUS"
+  VF="${CROP},scale=1080:1920:flags=lanczos,setsar=1,$SUBS"
+elif [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ]; then
   # Landscape gameplay -> 9:16 Short: blurred copy fills the screen, the game sits a little
   # zoomed in the middle, hook text above it, captions below it.
   VF="split[m][b];[b]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:3,eq=brightness=-0.12[bg];[m]scale=1296:-2,crop=1080:ih[fg];[bg][fg]overlay=(W-w)/2:520,setsar=1,$SUBS"
