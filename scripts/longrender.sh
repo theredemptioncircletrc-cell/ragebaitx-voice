@@ -36,8 +36,11 @@ ffmpeg -nostdin -hide_banner -loglevel error -y -i "$WORK/in.mp4" -vn -ac 2 -ar 
 GAME_WAV="$WORK/game.wav"
 if [ "$HAS_AUDIO" = "true" ] && [ "$(field remove_voice false)" = "true" ] && [ -x "${DEMUCS_PY:-}" ]; then
   echo "Removing the original talking (this takes a while on long videos)..."
-  "$DEMUCS_PY" -m demucs --two-stems=vocals -n htdemucs -d cpu --segment 7 -o "$WORK/sep" "$WORK/game.wav"
-  [ -s "$WORK/sep/htdemucs/game/no_vocals.wav" ] && GAME_WAV="$WORK/sep/htdemucs/game/no_vocals.wav"
+  if "$DEMUCS_PY" -m demucs --two-stems=vocals -n htdemucs -d cpu -o "$WORK/sep" "$WORK/game.wav" && [ -s "$WORK/sep/htdemucs/game/no_vocals.wav" ]; then
+    GAME_WAV="$WORK/sep/htdemucs/game/no_vocals.wav"
+  else
+    echo "::warning::Could not remove the original talking, keeping the original game sound."
+  fi
 fi
 echo "::endgroup::"
 
