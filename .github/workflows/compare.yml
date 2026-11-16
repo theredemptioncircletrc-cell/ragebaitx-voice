@@ -1,0 +1,140 @@
+name: Comparison
+
+# Started by the n8n workflow "RagebaitX – Comparison Maker" (GTA V vs GTA VI style).
+#   scan   : frame grids of both trailers -> n8n (the AI pairs matching shots)
+#   render : side-by-side / top-bottom video with wipes, labels, voice, uploaded to Google Drive
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "scan or render"
+        required: true
+        default: "scan"
+      video_url:
+        description: "Drive link of the OLDER game's video (e.g. GTA V trailer)"
+        required: true
+      job_id:
+        description: "n8n job ID"
+        required: false
+        default: "manual"
+      callback_url:
+        description: "n8n webhook that receives the result"
+        required: false
+        default: ""
+      payload:
+        description: "JSON (new_url, and for render: pairs, formats, upload links)"
+        required: false
+        default: "{}"
+
+run-name: "Compare ${{ inputs.stage }}: ${{ inputs.job_id }}"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  scan:
+    if: inputs.stage == 'scan'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg jq fonts-dejavu-core
+      - name: Watch both trailers
+        id: scan
+        env:
+          STAGE: scan
+          VIDEO_URL: ${{ inputs.video_url }}
+          PAYLOAD: ${{ inputs.payload }}
+          OUT_DIR: ${{ github.workspace }}/out
+          WORK_DIR: ${{ runner.temp }}/work
+        run: bash scripts/compare.sh
+      - name: Upload the grids
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: comparegrids-${{ github.run_id }}
+          path: out/grids
+          retention-days: 2
+          if-no-files-found: error
+      - name: Tell n8n the result
+        if: always() && inputs.callback_url != ''
+        env:
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          STATUS: ${{ job.status }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          OLD_S: ${{ steps.scan.outputs.old_s }}
+          NEW_S: ${{ steps.scan.outputs.new_s }}
+          JOB_ID: ${{ inputs.job_id }}
+          VIDEO_URL: ${{ inputs.video_url }}
+          PAYLOAD: ${{ inputs.payload }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -n --arg stage scan --arg status "$STATUS" --arg artifact_id "${ARTIFACT_ID:-}" --arg old_s "${OLD_S:-0}" --arg new_s "${NEW_S:-0}" \
+            --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" --arg video_url "$VIDEO_URL" --arg payload "$PAYLOAD" \
+            '{stage:$stage, status:$status, artifact_id:$artifact_id, old_s:($old_s|tonumber? // 0), new_s:($new_s|tonumber? // 0),
+              run_url:$run_url, job_id:$job_id, video_url:$video_url, payload:($payload|fromjson? // {})}' \
+          | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
+
+  render:
+    if: inputs.stage == 'render'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ffmpeg and fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg jq fonts-dejavu-core
+      - name: Restore caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.cache/huggingface
+          key: compare-${{ runner.os }}-v1
+      - name: Install voice tools
+        env:
+          PAYLOAD: ${{ inputs.payload }}
+        run: |
+          python -m venv .venv-tts
+          .venv-tts/bin/pip install -q --upgrade pip
+          .venv-tts/bin/pip install -q numpy soundfile
+          if [ "$(printf '%s' "$PAYLOAD" | jq -r 'if .narration == false then "false" else "true" end')" != "false" ]; then
+            .venv-tts/bin/pip install -q torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu || true
+            .venv-tts/bin/pip install -q "kokoro>=0.9.4" || true
+          fi
+      - name: Make the comparison videos
+        id: render
+        env:
+          STAGE: render
+          VIDEO_URL: ${{ inputs.video_url }}
+          PAYLOAD: ${{ inputs.payload }}
+          OUT_DIR: ${{ github.workspace }}/out
+          WORK_DIR: ${{ runner.temp }}/work
+          TTS_PY: ${{ github.workspace }}/.venv-tts/bin/python
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
+        run: bash scripts/compare.sh
+      - name: Tell n8n the result
+        if: always() && inputs.callback_url != ''
+        env:
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          STATUS: ${{ job.status }}
+          SHORT_ID: ${{ steps.render.outputs.short_id }}
+          LONG_ID: ${{ steps.render.outputs.long_id }}
+          JOB_ID: ${{ inputs.job_id }}
+          PAYLOAD: ${{ inputs.payload }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -n --arg stage render --arg status "$STATUS" --arg short_id "${SHORT_ID:-}" --arg long_id "${LONG_ID:-}" \
+            --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" --arg payload "$PAYLOAD" \
+            '{stage:$stage, status:$status, short_id:$short_id, long_id:$long_id, run_url:$run_url, job_id:$job_id,
+              meta:(($payload|fromjson? // {}).meta // {})}' \
+          | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
