@@ -275,11 +275,18 @@ def render(v, vi, payload_path, out):
             post = "[wm]"
             n += 1
         # Sound: the newer trailer's audio runs underneath (music + effects), voice ducks it.
-        ins += ["-ss", f"{float(P.get('music_from', 0)):.2f}", "-i", vi]
+        music = os.environ.get("MUSIC")
+        if music and os.path.exists(music):
+            # Your own song (looped if the video is longer than it), a bit softer under the voice.
+            ins += ["-stream_loop", "-1", "-i", music]
+            vol = 0.55 if os.environ.get("VOICE_WAV") else 0.8
+        else:
+            ins += ["-ss", f"{float(P.get('music_from', 0)):.2f}", "-i", vi]
+            vol = 0.9
         mi = n
         n += 1
         fc += (f"[{mi}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=duration={acc:.3f},"
-               f"afade=t=in:d=0.6,afade=t=out:st={max(0, acc - 2):.3f}:d=2,volume=0.9[bg];")
+               f"afade=t=in:d=0.6,afade=t=out:st={max(0, acc - 2):.3f}:d=2,volume={vol}[bg];")
         voice = os.environ.get("VOICE_WAV")
         if voice and os.path.exists(voice):
             ins += ["-i", voice]

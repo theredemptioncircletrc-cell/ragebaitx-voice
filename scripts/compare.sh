@@ -28,6 +28,10 @@ WM_ID=$(field watermark_id "")
 if [ -n "$WM_ID" ] && curl -fsSL --retry 3 -o "$WORK/logo_raw" "https://drive.usercontent.google.com/download?id=$WM_ID&export=download&confirm=t" \
    && ffmpeg -nostdin -loglevel error -y -i "$WORK/logo_raw" -frames:v 1 "$WORK/logo.png"; then export LOGO="$WORK/logo.png"; fi
 
+MUSIC_ID=$(field music_id "")
+if [ -n "$MUSIC_ID" ] && curl -fsSL --retry 3 -o "$WORK/music_raw" "https://drive.usercontent.google.com/download?id=$MUSIC_ID&export=download&confirm=t" \
+   && ffmpeg -nostdin -loglevel error -y -i "$WORK/music_raw" -vn -ac 2 -ar 48000 "$WORK/music.wav"; then export MUSIC="$WORK/music.wav"; echo "Using your background song"; fi
+
 if [ "$(printf '%s' "$PAYLOAD" | jq -r 'if .narration == false then "false" else "true" end')" = "true" ]; then
   echo "::group::Voice"
   python3 "$HERE/compare.py" lines "$WORK/old.mp4" "$WORK/new.mp4" "$WORK/payload.json" "$WORK/lines.json"
