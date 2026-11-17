@@ -33,16 +33,14 @@ if [ -n "$MUSIC_ID" ] && curl -fsSL --retry 3 -o "$WORK/music_raw" "https://driv
    && ffmpeg -nostdin -loglevel error -y -i "$WORK/music_raw" -vn -ac 2 -ar 48000 "$WORK/music.wav"; then export MUSIC="$WORK/music.wav"; echo "Using your background song"; fi
 
 if [ "$(printf '%s' "$PAYLOAD" | jq -r 'if .narration == false then "false" else "true" end')" = "true" ]; then
-  echo "::group::Voice"
-  python3 "$HERE/compare.py" lines "$WORK/old.mp4" "$WORK/new.mp4" "$WORK/payload.json" "$WORK/lines.json"
-  TOTAL=$(cat "$WORK/lines.json.total")
+  echo "::group::Voice (each line voiced first, the video is timed around it)"
+  python3 "$HERE/compare.py" texts "$WORK/payload.json" "$WORK/texts.json"
   ENGINE=kokoro; VID="am_puck"
   if [ -n "${ELEVENLABS_API_KEY:-}" ] && [ -n "${ELEVENLABS_VOICE_ID:-}" ]; then ENGINE=eleven; VID="$ELEVENLABS_VOICE_ID"; fi
-  if [ "$(jq length "$WORK/lines.json")" -gt 0 ]; then
-    if ! WORDS_OUT="$WORK/words.json" "$TTS_PY" "$HERE/tts_timed.py" "$WORK/lines.json" "$TOTAL" "$WORK/voice.wav" "$WORK/unused.ass" "$ENGINE" "$VID" 0; then
-      [ "$ENGINE" = "eleven" ] && WORDS_OUT="$WORK/words.json" "$TTS_PY" "$HERE/tts_timed.py" "$WORK/lines.json" "$TOTAL" "$WORK/voice.wav" "$WORK/unused.ass" kokoro am_puck 0 || true
-    fi
-    [ -s "$WORK/voice.wav" ] && export VOICE_WAV="$WORK/voice.wav" WORDS_JSON="$WORK/words.json"
+  if "$TTS_PY" "$HERE/tts_lines.py" "$WORK/texts.json" "$WORK/vo" "$ENGINE" "$VID" && [ -s "$WORK/vo/lines.json" ]; then
+    export VOICE_JSON="$WORK/vo/lines.json"
+  else
+    echo "::warning::Voice failed, making the video without it."
   fi
   echo "::endgroup::"
 fi

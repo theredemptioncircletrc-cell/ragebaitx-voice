@@ -79,9 +79,13 @@ def scan(v, vi, out):
 
 
 # ---------------------------------------------------------------- render
-def cut(src, start, length, out):
-    ff("-ss", f"{max(0, start):.3f}", "-i", src, "-t", f"{length:.3f}", "-an",
-       "-vf", f"scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos,crop=1920:1080,setsar=1,fps={FPS},format=yuv420p",
+def cut(src, start, length, out, avail=None):
+    """length seconds of video from start. If the shot itself is shorter (avail), it plays in slow motion
+    (down to 0.6x) so the voice line can finish over the same shot."""
+    rate = 1.0 if not avail or avail >= length else max(0.6, avail / length)
+    ff("-ss", f"{max(0, start):.3f}", "-t", f"{length * rate + 0.15:.3f}", "-i", src, "-an",
+       "-vf", f"setpts=PTS/{rate:.4f},scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos,crop=1920:1080,setsar=1,"
+              f"fps={FPS},format=yuv420p,trim=duration={length:.3f}",
        "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", out)
 
 
@@ -118,9 +122,9 @@ def pair_clip(p, fmt, a, b, D, out, names):
        "-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p", out)
 
 
-def card(bg, fmt, kind, P, out, logo=None):
+def card(bg, fmt, kind, P, out, L=None):
     W, H = (1080, 1920) if fmt == "short" else (1920, 1080)
-    L = INTRO if kind == "intro" else OUTRO
+    L = L or (INTRO if kind == "intro" else OUTRO)
     big = 150 if fmt == "short" else 170
     base = (f"[0:v]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},boxblur=18:2,eq=brightness=-0.28:saturation=1.3,"
             f"zoompan=z='1+0.0009*on':d={int(L * FPS)}:s={W}x{H}:fps={FPS}")
@@ -146,6 +150,9 @@ def captions(words, fmt, path):
     per = 3 if fmt == "short" else 6
     groups, cur = [], []
     for w in words:
+        if cur and w[1] - cur[-1][2] > 0.5:   # a pause = a new line, never mix two lines on screen
+            groups.append(cur)
+            cur = []
         cur.append(w)
         if len(cur) >= per or re.search(r"[.,!?]$", w[0]):
             groups.append(cur)
@@ -181,15 +188,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """ + "\n".join(lines) + "\n")
 
 
-def timeline(P, total_pairs):
-    """Start time of each pair in the joined video (intro first, XT overlap at every join)."""
-    t, starts = INTRO - XT, []
-    for d in total_pairs:
-        starts.append(t)
-        t += d - XT
-    return starts, t + OUTRO
-
-
 def plan_pairs(P, dv, dvi):
     pairs = []
     for p in P.get("pairs", []):
@@ -198,29 +196,33 @@ def plan_pairs(P, dv, dvi):
         except Exception:  # noqa: BLE001
             continue
         a0, b0 = max(0, min(a0, dv - 2)), max(0, min(b0, dvi - 2))
-        D = max(2.5, min(7.0, a1 - a0, b1 - b0, dv - a0, dvi - b0))
-        pairs.append({**p, "a0": a0, "b0": b0, "D": round(D, 2)})
+        avail = max(1.5, min(a1 - a0, b1 - b0, dv - a0, dvi - b0))   # length of the shot itself
+        pairs.append({**p, "a0": a0, "b0": b0, "avail": round(avail, 2), "room_a": dv - a0, "room_b": dvi - b0})
     if len(pairs) < 2:
         sys.exit("Need at least 2 matched pairs")
     return pairs
 
 
-def voice_lines(v, vi, payload_path, out_json):
-    """Timed voice lines on the joined timeline: the intro line, then one line per pair."""
+def voice_texts(payload_path, out_json):
+    """The lines to voice: intro, one per pair, outro (timing is decided later, around their length)."""
     P = json.load(open(payload_path))
-    pairs = plan_pairs(P, dur(v), dur(vi))
-    starts, total = timeline(P, [p["D"] for p in pairs])
-    lines = []
-    if str(P.get("intro_say", "")).strip():
-        lines.append({"t": 0.3, "say": P["intro_say"]})
-    for s, p in zip(starts, pairs):
-        if str(p.get("say", "")).strip():
-            lines.append({"t": round(s + 0.35, 2), "say": p["say"]})
-    if str(P.get("outro_say", "")).strip():
-        lines.append({"t": round(total - OUTRO + 0.2, 2), "say": P["outro_say"]})
-    json.dump(lines, open(out_json, "w"))
-    print(f"{len(lines)} voice lines, video {total:.1f}s")
-    print(f"{total:.2f}", file=open(out_json + ".total", "w"))
+    texts = {"intro": P.get("intro_say", ""), "outro": P.get("outro_say", "")}
+    for i, p in enumerate(P.get("pairs", [])):
+        texts[f"p{i}"] = p.get("say", "")
+    json.dump(texts, open(out_json, "w"))
+
+
+def place_voice(entries, total, path):
+    """entries: [(start, wav)] -> one voice track of length total."""
+    if not entries:
+        return False
+    ins, fc = [], ""
+    for k, (t, wav) in enumerate(entries):
+        ins += ["-i", wav]
+        fc += f"[{k}:a]aresample=48000,aformat=channel_layouts=mono,adelay={int(t * 1000)}:all=1[v{k}];"
+    fc += "".join(f"[v{k}]" for k in range(len(entries))) + f"amix=inputs={len(entries)}:normalize=0:duration=longest,apad,atrim=duration={total:.3f}[o]"
+    ff(*ins, "-filter_complex", fc, "-map", "[o]", "-ar", "48000", path)
+    return True
 
 
 def render(v, vi, payload_path, out):
@@ -231,55 +233,88 @@ def render(v, vi, payload_path, out):
     os.makedirs(out, exist_ok=True)
     work = os.path.join(out, "work")
     os.makedirs(work, exist_ok=True)
-    pairs = plan_pairs(P, dur(v), dur(vi))
-    for i, p in enumerate(pairs):
-        cut(v, p["a0"], p["D"], f"{work}/a{i}.mp4")
-        cut(vi, p["b0"], p["D"], f"{work}/b{i}.mp4")
-    ff("-ss", f"{pairs[0]['b0'] + 0.5:.2f}", "-i", vi, "-frames:v", "1", f"{work}/bg_in.png")
-    ff("-ss", f"{pairs[-1]['b0'] + pairs[-1]['D'] / 2:.2f}", "-i", vi, "-frames:v", "1", f"{work}/bg_out.png")
-    starts, total = timeline(P, [p["D"] for p in pairs])
-    json.dump({"starts": [round(s, 2) for s in starts], "total": round(total, 2)}, open(f"{out}/timeline.json", "w"))
+    allpairs = plan_pairs(P, dur(v), dur(vi))
+    vj = os.environ.get("VOICE_JSON")
+    VO = json.load(open(vj)) if vj and os.path.exists(vj) else {}
+    for i, p in enumerate(allpairs):
+        p["vo"] = VO.get(f"p{i}")
+    ff("-ss", f"{allpairs[0]['b0'] + 0.5:.2f}", "-i", vi, "-frames:v", "1", f"{work}/bg_in.png")
+    ff("-ss", f"{allpairs[-1]['b0'] + allpairs[-1]['avail'] / 2:.2f}", "-i", vi, "-frames:v", "1", f"{work}/bg_out.png")
+    cuts = {}
 
     for fmt in P.get("formats") or ["short", "long"]:
+        if fmt == "short":
+            # The Short is the tight cut: only the best pairs (marked by the AI), quick and punchy.
+            pairs = [p for p in allpairs if p.get("short")] or allpairs[:8]
+            pairs = pairs[:8]
+            base_min, base_max = 2.8, 5.0
+        else:
+            # The long version shows every pair and lets each shot breathe.
+            pairs = allpairs
+            base_min, base_max = 4.5, 8.0
+        # Each pair lasts as long as its shot, at least as long as its voice line (+ a breath).
+        for p in pairs:
+            need = (p["vo"]["dur"] + 1.1) if p.get("vo") else 0
+            p["D_" + fmt] = round(min(10.0, max(base_min, min(base_max, p["avail"]), need)), 2)
+        intro_L = max(INTRO, VO["intro"]["dur"] + 0.6) if VO.get("intro") else INTRO
+        outro_L = max(OUTRO, VO["outro"]["dur"] + 1.0) if VO.get("outro") else OUTRO
+
         clips = [f"{work}/{fmt}_intro.mp4"]
-        card(f"{work}/bg_in.png", fmt, "intro", P, clips[0])
-        for i, p in enumerate(pairs):
+        card(f"{work}/bg_in.png", fmt, "intro", P, clips[0], intro_L)
+        for p in pairs:
+            i, D = allpairs.index(p), p["D_" + fmt]
+            for side, src, start, room in (("a", v, p["a0"], p["room_a"]), ("b", vi, p["b0"], p["room_b"])):
+                key = (side, i, D)
+                if key not in cuts:
+                    cuts[key] = f"{work}/{side}{i}_{int(D * 100)}.mp4"
+                    cut(src, start, D, cuts[key], avail=min(p["avail"] + 0.6, room))
             o = f"{work}/{fmt}_p{i}.mp4"
-            pair_clip(p, fmt, f"{work}/a{i}.mp4", f"{work}/b{i}.mp4", p["D"], o, names)
+            pair_clip(p, fmt, cuts[("a", i, D)], cuts[("b", i, D)], D, o, names)
             clips.append(o)
         clips.append(f"{work}/{fmt}_outro.mp4")
-        card(f"{work}/bg_out.png", fmt, "outro", P, clips[-1])
-        # Join everything with varied transitions.
-        ins, fc, V, acc = [], "", "[0:v]", INTRO
+        card(f"{work}/bg_out.png", fmt, "outro", P, clips[-1], outro_L)
+
+        # Join everything with varied transitions; remember where each clip starts.
+        ins, fc, V, acc, starts = [], "", "[0:v]", intro_L, [0.0]
         for c in clips:
             ins += ["-i", c]
         for k in range(1, len(clips)):
             tr = TRANS[(k - 1) % len(TRANS)]
             fc += f"{V}[{k}:v]xfade=transition={tr}:duration={XT}:offset={acc - XT:.3f}[x{k}];"
             V = f"[x{k}]"
+            starts.append(acc - XT)
             acc += dur(clips[k]) - XT
         n = len(clips)
-        W, H = (1080, 1920) if fmt == "short" else (1920, 1080)
         post = V
-        words = os.environ.get("WORDS_JSON")
-        if words and os.path.exists(words):
-            captions(json.load(open(words)), fmt, f"{work}/{fmt}.ass")
+
+        # Voice: every line starts right as its own pair appears, so it always matches the picture.
+        entries, words = [], []
+        plan = [("intro", 0.25)] + [(f"p{allpairs.index(p)}", starts[k + 1] + XT + 0.15) for k, p in enumerate(pairs)] \
+            + [("outro", starts[-1] + XT + 0.2)]
+        for key, t in plan:
+            vo = VO.get(key)
+            if vo:
+                entries.append((t, vo["wav"]))
+                words += [[w, t + a, t + b] for w, a, b in vo["words"]]
+        voice = f"{work}/{fmt}_voice.wav"
+        has_voice = place_voice(entries, acc, voice)
+        if words:
+            captions(words, fmt, f"{work}/{fmt}.ass")
             fc += f"{post}subtitles={work}/{fmt}.ass[cap];"
             post = "[cap]"
         logo = os.environ.get("LOGO")
         if logo and os.path.exists(logo):
             lw = 150 if fmt == "short" else 130
             ins += ["-i", logo]
-            lx, ly = (f"W-w-30", "H-h-430") if fmt == "short" else ("W-w-36", "H-h-36")
+            lx, ly = ("W-w-30", "H-h-430") if fmt == "short" else ("W-w-36", "H-h-36")
             fc += f"[{n}:v]scale={lw}:-1,format=rgba,colorchannelmixer=aa=0.85[lg];{post}[lg]overlay={lx}:{ly}[wm];"
             post = "[wm]"
             n += 1
-        # Sound: the newer trailer's audio runs underneath (music + effects), voice ducks it.
+        # Sound: your song (looped), or the newer trailer's audio; it dips while the voice talks.
         music = os.environ.get("MUSIC")
         if music and os.path.exists(music):
-            # Your own song (looped if the video is longer than it), a bit softer under the voice.
             ins += ["-stream_loop", "-1", "-i", music]
-            vol = 0.55 if os.environ.get("VOICE_WAV") else 0.8
+            vol = 0.55 if has_voice else 0.8
         else:
             ins += ["-ss", f"{float(P.get('music_from', 0)):.2f}", "-i", vi]
             vol = 0.9
@@ -287,8 +322,7 @@ def render(v, vi, payload_path, out):
         n += 1
         fc += (f"[{mi}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=duration={acc:.3f},"
                f"afade=t=in:d=0.6,afade=t=out:st={max(0, acc - 2):.3f}:d=2,volume={vol}[bg];")
-        voice = os.environ.get("VOICE_WAV")
-        if voice and os.path.exists(voice):
+        if has_voice:
             ins += ["-i", voice]
             fc += (f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,volume=1.6,asplit=2[vo][sc];"
                    f"[bg][sc]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350[duck];"
@@ -299,13 +333,13 @@ def render(v, vi, payload_path, out):
         run(["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-stats", "-y", *ins, "-filter_complex", fc,
              "-map", post, "-map", "[aout]", "-t", f"{acc:.3f}", "-c:v", "libx264", "-preset", "medium", "-crf", "19",
              "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", dest])
-        print(f"{fmt}: {dest} {dur(dest):.1f}s")
+        print(f"{fmt}: {dest} {dur(dest):.1f}s, {len(pairs)} pairs: " + ", ".join(f"{p['label']} {p['D_' + fmt]}s" for p in pairs))
 
 
 if __name__ == "__main__":
     if sys.argv[1] == "scan":
         scan(*sys.argv[2:5])
-    elif sys.argv[1] == "lines":
-        voice_lines(*sys.argv[2:6])
+    elif sys.argv[1] == "texts":
+        voice_texts(*sys.argv[2:4])
     else:
         render(*sys.argv[2:6])
