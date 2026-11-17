@@ -185,4 +185,24 @@ ffmpeg -nostdin -hide_banner -loglevel error -y \
   -c:a aac -b:a 192k -ar 48000 -t "$TOTAL" -movflags +faststart "$OUT_FILE"
 ls -lh "$OUT_FILE"
 echo "::endgroup::"
+
+# Goofy edits (zoom punches, freeze frames, "what happens next?" pauses, instant replays) picked by the AI.
+if [ "$(printf '%s' "$PAYLOAD" | jq '.fx // [] | length')" -gt 0 ] && [ "$(field vertical false)" = "true" ]; then
+  echo "::group::Goofy edits"
+  printf '%s' "$PAYLOAD" | jq -c '.fx' > "$WORK/fx.json"
+  mkdir -p "$WORK/sfx"
+  # Your own sound effects from Drive (12 – Sound Effects); anything missing is made on the fly.
+  printf '%s' "$PAYLOAD" | jq -r '.sfx // [] | .[] | "\(.id)\t\(.name)"' | while IFS=$'\t' read -r SID SNAME; do
+    [ -n "$SID" ] && curl -fsSL --retry 2 -o "$WORK/sfx/$(printf '%s' "$SNAME" | tr -c 'A-Za-z0-9._-' '_')" \
+      "https://drive.usercontent.google.com/download?id=${SID}&export=download&confirm=t" || true
+  done
+  ls "$WORK/sfx" || true
+  if python3 "$HERE/goofy.py" "$OUT_FILE" "$WORK/fx.json" "$WORK/goofy.mp4" "$DUR" "$WORK/sfx"; then
+    mv "$WORK/goofy.mp4" "$OUT_FILE"
+  else
+    echo "::warning::Goofy edits failed, keeping the clean version."
+  fi
+  ls -lh "$OUT_FILE"
+  echo "::endgroup::"
+fi
 echo "Done: $OUT_FILE"
