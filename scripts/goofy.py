@@ -150,6 +150,28 @@ def replay(src, t, sfx_dir):
     return [rew, slo]
 
 
+def teaser(src, at, text, sfx_dir):
+    """Cold open: the peak moment first (muffled, with the hook question), then "N SECONDS EARLIER..." back to the start."""
+    a, b = max(0.0, at - 0.9), at + 0.8
+    L = b - a
+    seg = os.path.join(TMP, "teaser_seg.mkv"); piece(src, a, b, seg)
+    ass = os.path.join(TMP, "teaser.ass")
+    ass_text([(text or "HOW DID WE GET HERE?", "&H0000E5FF", 96, 0)], ass, L)
+    hot = os.path.join(TMP, "teaser_hot.mkv")
+    ff("-i", seg, "-i", sfx("whoosh", sfx_dir), "-filter_complex",
+       f"[0:v]eq=contrast=1.15:saturation=1.35,fade=in:st=0:d=0.12:color=white,subtitles={ass}[v];"
+       f"[0:a]lowpass=f=1100,volume=0.9[g];[1:a]atrim=duration={L:.3f},volume=0.8[w];[g][w]amix=inputs=2:duration=first:normalize=0[a]",
+       "-map", "[v]", "-map", "[a]", "-t", f"{L:.3f}", *ENC, hot)
+    png = os.path.join(TMP, "teaser_start.png"); frame_at(src, 0.05, png)
+    ass2 = os.path.join(TMP, "teaser_card.ass")
+    ass_text([(f"{max(1, round(at))} SECONDS EARLIER...", "&H00FFFFFF", 84, 0)], ass2, 0.85, pop=False)
+    card = os.path.join(TMP, "teaser_card.mkv")
+    ff("-loop", "1", "-t", "0.85", "-i", png, "-i", sfx("rewind", sfx_dir), "-filter_complex",
+       f"[0:v]scale={W}:{H},hue=s=0.2,eq=brightness=-0.15,noise=alls=24:allf=t,subtitles={ass2},fps={FPS}[v];"
+       f"[1:a]apad,atrim=duration=0.85,afade=out:st=0.6:d=0.25[a]", "-map", "[v]", "-map", "[a]", "-t", "0.85", *ENC, card)
+    return [hot, card]
+
+
 def zooms_pass(src, out, zs, sfx_dir, total):
     """Punch-in + shake + flash on every zoom time, with a boom."""
     env = "+".join(f"if(between(t\\,{z:.2f}\\,{z + 0.65:.2f})\\,if(lt(t-{z:.2f}\\,0.07)\\,(t-{z:.2f})/0.07\\,1-(t-{z:.2f}-0.07)/0.58)\\,0)" for z in zs)
@@ -172,7 +194,9 @@ def main():
     sfx_dir = sys.argv[5] if len(sys.argv) > 5 else ""
     clip_s = float(clip_s)
     total = dur(src)
-    fx = [f for f in json.load(open(fx_path)) if isinstance(f, dict) and f.get("type") in ("zoom", "replay", "freeze", "guess")]
+    fx = [f for f in json.load(open(fx_path)) if isinstance(f, dict) and f.get("type") in ("zoom", "replay", "freeze", "guess", "teaser")]
+    tz = next((f for f in fx if f["type"] == "teaser"), None)
+    fx = [f for f in fx if f["type"] != "teaser"]
     for f in fx:
         f["t"] = round(min(max(1.0, float(f.get("t", 0) or 0)), clip_s - 0.4), 2)
     zs = sorted({f["t"] for f in fx if f["type"] == "zoom"})[:3]
@@ -181,13 +205,15 @@ def main():
         if f["type"] in seen or f["t"] - last < 2.0:
             continue
         seen.add(f["type"]); inserts.append(f); last = f["t"]
-    print(f"Goofy edits: zooms {zs}, inserts {[(f['type'], f['t']) for f in inserts]}")
+    print(f"Goofy edits: teaser {tz}, zooms {zs}, inserts {[(f['type'], f['t']) for f in inserts]}")
     base = os.path.join(TMP, "base.mkv")
     if zs:
         zooms_pass(src, base, zs, sfx_dir, total)
     else:
         piece(src, 0, total, base)
     parts, cur = [], 0.0
+    if tz and 3.0 <= float(tz.get("t", 0) or 0) <= clip_s - 0.5:
+        parts += teaser(base, float(tz["t"]), str(tz.get("text", "")).strip()[:50], sfx_dir)
     for f in inserts:
         t = f["t"]
         if t - cur > 0.05:
