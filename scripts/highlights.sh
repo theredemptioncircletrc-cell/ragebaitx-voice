@@ -21,6 +21,13 @@ echo "::endgroup::"
 
 echo "::group::Listen for hype moments"
 python3 "$HERE/highlights.py" "$WORK/long.mp4" "$OUT_DIR" "${MAX_CANDIDATES:-10}"
+# Radio-aware: mark how much of each moment has the in-game radio / music playing.
+if python3 "$HERE/radio_detect.py" "$WORK/long.mp4" "$OUT_DIR/radio.json"; then
+  jq --slurpfile r "$OUT_DIR/radio.json" '.radio = $r[0].radio | .candidates |= map(
+      . as $c | ($r[0].radio | map([0, ([.[1], $c.end] | min) - ([.[0], $c.start] | max)] | max) | add // 0) as $ov
+      | .radio_frac = (($ov / ([($c.end - $c.start), 1] | max)) * 100 | round / 100))' \
+    "$OUT_DIR/candidates.json" > "$OUT_DIR/c2.json" && mv "$OUT_DIR/c2.json" "$OUT_DIR/candidates.json"
+fi
 echo "::endgroup::"
 
 FONT=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf

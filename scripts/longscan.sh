@@ -21,6 +21,9 @@ echo "::group::Loudest moments"
 python3 "$HERE/highlights.py" "$WORK/long.mp4" "$WORK" 15 || echo '{"candidates":[]}' > "$WORK/candidates.json"
 jq -c '[.candidates[] | .peak] | sort' "$WORK/candidates.json" > "$OUT_DIR/grids/peaks.json"
 cat "$OUT_DIR/grids/peaks.json"
+# Radio-aware: stretches where the in-game radio / music plays (the edit avoids them when it can).
+python3 "$HERE/radio_detect.py" "$WORK/long.mp4" "$OUT_DIR/grids/radio.json" || echo '{"radio":[]}' > "$OUT_DIR/grids/radio.json"
+cat "$OUT_DIR/grids/radio.json"
 echo "::endgroup::"
 
 echo "::group::Frame grids"
