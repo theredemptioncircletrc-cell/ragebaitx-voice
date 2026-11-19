@@ -216,13 +216,20 @@ if [ -n "$OI" ]; then
 fi
 
 GOP=$(awk -v f="$FPS" 'BEGIN { printf "%.0f", f * 2 }')
+# 4K export: keep this step near-lossless, the 4K pass does the final compression.
+if [ "$(field quality normal)" = "4k" ]; then FCRF=15; FMAX=30M; else FCRF=22; FMAX=8M; fi
 ffmpeg -nostdin -hide_banner -loglevel error -stats -y "${INS[@]}" \
   -filter_complex "$FC" -map "$V" -map "$A" \
-  -c:v libx264 -preset veryfast -crf 22 -maxrate 8M -bufsize 16M -g "$GOP" -pix_fmt yuv420p \
+  -c:v libx264 -preset veryfast -crf "$FCRF" -maxrate "$FMAX" -bufsize 16M -g "$GOP" -pix_fmt yuv420p \
   -c:a aac -b:a 192k -ar 48000 -ac 2 -movflags +faststart "$WORK/final.mp4"
 FINAL="$WORK/final.mp4"
 echo "::endgroup::"
 ls -lh "$FINAL"
+if [ "$(field quality normal)" = "4k" ]; then
+  echo "::group::4K export (clean-up + upscale + sharpen)"
+  if bash "$HERE/enhance.sh" "$FINAL" "$WORK/final_4k.mp4"; then FINAL="$WORK/final_4k.mp4"; else echo "::warning::4K export failed, uploading the normal version."; fi
+  echo "::endgroup::"
+fi
 
 echo "::group::Upload to Google Drive"
 UPLOAD_URL=$(field upload_url "")

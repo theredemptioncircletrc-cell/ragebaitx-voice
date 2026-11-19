@@ -209,7 +209,7 @@ fi
 ffmpeg -nostdin -hide_banner -loglevel error -y \
   -i "$WORK/in.mp4" -i "$VOICE_WAV" "${EXTRA_IN[@]}" \
   -filter_complex "$FILTER" -map 0:v:0 -map "[a]" -vf "$VF" \
-  -c:v libx264 -preset veryfast -crf 23 -maxrate 5M -bufsize 10M -pix_fmt yuv420p \
+  -c:v libx264 -preset veryfast -crf "$( [ "$(field quality normal)" = "4k" ] && echo 16 || echo 23 )" -maxrate "$( [ "$(field quality normal)" = "4k" ] && echo 25M || echo 5M )" -bufsize 10M -pix_fmt yuv420p \
   -c:a aac -b:a 192k -ar 48000 -t "$TOTAL" -movflags +faststart "$OUT_FILE"
 ls -lh "$OUT_FILE"
 echo "::endgroup::"
@@ -225,12 +225,19 @@ if [ "$(printf '%s' "$PAYLOAD" | jq '.fx // [] | length')" -gt 0 ] && [ "$(field
       "https://drive.usercontent.google.com/download?id=${SID}&export=download&confirm=t" || true
   done
   ls "$WORK/sfx" || true
+  [ "$(field quality normal)" = "4k" ] && export GOOFY_CRF=16 GOOFY_MAX=25M
   if python3 "$HERE/goofy.py" "$OUT_FILE" "$WORK/fx.json" "$WORK/goofy.mp4" "$DUR" "$WORK/sfx"; then
     mv "$WORK/goofy.mp4" "$OUT_FILE"
   else
     echo "::warning::Goofy edits failed, keeping the clean version."
   fi
   ls -lh "$OUT_FILE"
+  echo "::endgroup::"
+fi
+if [ "$(field quality normal)" = "4k" ]; then
+  echo "::group::4K export (clean-up + upscale + sharpen)"
+  VMODE=""; [ "$(field vertical false)" = "true" ] && VMODE=vertical
+  if bash "$HERE/enhance.sh" "$OUT_FILE" "$WORK/final_4k.mp4" $VMODE; then mv "$WORK/final_4k.mp4" "$OUT_FILE"; else echo "::warning::4K export failed, keeping the normal version."; fi
   echo "::endgroup::"
 fi
 echo "Done: $OUT_FILE"

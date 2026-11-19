@@ -93,7 +93,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """ + "\n".join(ev) + "\n")
 
 
-ENC = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-r", str(FPS),
+ENC = ["-c:v", "libx264", "-preset", "veryfast", "-crf", os.environ.get("GOOFY_CRF", "20"), "-pix_fmt", "yuv420p", "-r", str(FPS),
        "-c:a", "pcm_s16le", "-ar", "48000", "-ac", "2"]
 
 
@@ -310,8 +310,8 @@ def main():
     for p in parts:
         ins += ["-i", p]
     cat = "".join(f"[{k}:v][{k}:a]" for k in range(len(parts))) + f"concat=n={len(parts)}:v=1:a=1[v][a]"
-    ff(*ins, "-filter_complex", cat, "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
-       "-maxrate", "6M", "-bufsize", "12M", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out)
+    ff(*ins, "-filter_complex", cat, "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", os.environ.get("GOOFY_CRF", "21"),
+       "-maxrate", os.environ.get("GOOFY_MAX", "6M"), "-bufsize", "12M", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", out)
     print(f"Goofy Short: {dur(out):.1f}s (was {total:.1f}s)")
 
 
