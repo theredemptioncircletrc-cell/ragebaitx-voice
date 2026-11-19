@@ -73,6 +73,7 @@ jobs:
           PAYLOAD: ${{ inputs.payload }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          sleep 20  # give GitHub time to finish the artifact before n8n downloads it
           jq -n --arg stage scan --arg status "$STATUS" --arg artifact_id "${ARTIFACT_ID:-}" --arg old_s "${OLD_S:-0}" --arg new_s "${NEW_S:-0}" \
             --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" --arg video_url "$VIDEO_URL" --arg payload "$PAYLOAD" \
             '{stage:$stage, status:$status, artifact_id:$artifact_id, old_s:($old_s|tonumber? // 0), new_s:($new_s|tonumber? // 0),
@@ -133,6 +134,7 @@ jobs:
           PAYLOAD: ${{ inputs.payload }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          sleep 20  # give GitHub time to finish the artifact before n8n downloads it
           jq -n --arg stage render --arg status "$STATUS" --arg short_id "${SHORT_ID:-}" --arg long_id "${LONG_ID:-}" \
             --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" --arg payload "$PAYLOAD" \
             '{stage:$stage, status:$status, short_id:$short_id, long_id:$long_id, run_url:$run_url, job_id:$job_id,

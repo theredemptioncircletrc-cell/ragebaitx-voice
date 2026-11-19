@@ -88,6 +88,7 @@ jobs:
           PAYLOAD: ${{ inputs.payload }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          sleep 20  # give GitHub time to finish the artifact before n8n downloads it
           jq -n \
             --arg stage frames --arg status "$STATUS" --arg artifact_id "${ARTIFACT_ID:-}" \
             --arg duration "${DURATION:-0}" --arg has_audio "${HAS_AUDIO:-true}" \
@@ -200,6 +201,7 @@ jobs:
           CLIP_TITLE: ${{ inputs.clip_title }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          sleep 20  # give GitHub time to finish the artifact before n8n downloads it
           jq -n \
             --arg status "$STATUS" --arg artifact_id "${ARTIFACT_ID:-}" --arg run_id "$GITHUB_RUN_ID" --arg run_url "$RUN_URL" \
             --arg job_id "$JOB_ID" --arg clip_id "$CLIP_ID" --arg clip_title "$CLIP_TITLE" \

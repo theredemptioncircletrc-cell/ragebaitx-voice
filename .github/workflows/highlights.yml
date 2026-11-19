@@ -80,6 +80,7 @@ jobs:
           PAYLOAD: ${{ inputs.payload }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          sleep 20  # give GitHub time to finish the artifact before n8n downloads it
           jq -n \
             --arg stage highlights --arg status "$STATUS" --arg artifact_id "${ARTIFACT_ID:-}" \
             --arg release "hl-${GITHUB_RUN_ID}" --arg count "${COUNT:-0}" --arg duration "${DURATION:-0}" \

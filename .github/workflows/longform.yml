@@ -71,6 +71,7 @@ jobs:
           PAYLOAD: ${{ inputs.payload }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          sleep 20  # give GitHub time to finish the artifact before n8n downloads it
           jq -n --arg stage scan --arg status "$STATUS" --arg artifact_id "${ARTIFACT_ID:-}" --arg duration "${DURATION:-0}" \
             --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" --arg video_url "$VIDEO_URL" --arg payload "$PAYLOAD" \
             '{stage:$stage, status:$status, artifact_id:$artifact_id, duration:($duration|tonumber? // 0), run_url:$run_url,
@@ -140,6 +141,7 @@ jobs:
           PAYLOAD: ${{ inputs.payload }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          sleep 20  # give GitHub time to finish the artifact before n8n downloads it
           jq -n --arg stage render --arg status "$STATUS" --arg drive_id "${DRIVE_ID:-}" --arg size_mb "${SIZE_MB:-0}" \
             --arg intro_s "${INTRO_S:-0}" --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" --arg payload "$PAYLOAD" \
             --rawfile srt <(cat out/subs.srt 2>/dev/null || true) \
@@ -177,6 +179,7 @@ jobs:
           PAYLOAD: ${{ inputs.payload }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          sleep 20  # give GitHub time to finish the artifact before n8n downloads it
           jq -n --arg stage post --arg status "$STATUS" --arg video_id "${VIDEO_ID:-}" --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" --arg payload "$PAYLOAD" \
             '{stage:$stage, status:$status, video_id:$video_id, run_url:$run_url, job_id:$job_id, row_id:(($payload|fromjson? // {}).row_id // null), privacy:(($payload|fromjson? // {}).privacy // "")}' \
           | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
