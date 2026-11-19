@@ -109,7 +109,7 @@ jobs:
           .venv-tts/bin/pip install -q torch==2.11.0 --index-url https://download.pytorch.org/whl/cpu
           .venv-tts/bin/pip install -q "kokoro>=0.9.4" soundfile
       - name: Install Demucs (removes the original talking)
-        if: contains(inputs.payload, '"remove_voice":true')
+        if: contains(inputs.payload, '"remove_voice":true') || contains(inputs.payload, '"sound":"swap_music"')
         run: |
           python -m venv .venv-demucs
           .venv-demucs/bin/pip install -q --upgrade pip

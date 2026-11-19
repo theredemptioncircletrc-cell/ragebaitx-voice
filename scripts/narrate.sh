@@ -49,7 +49,18 @@ echo "::endgroup::"
 
 # Optional: remove anyone talking in the original clip (streamer mic, Opus narrator), keep the game sound.
 GAME_SRC="0:a"
-if [ "$HAS_AUDIO" = "true" ] && [ "$(field remove_voice false)" = "true" ] && [ -x "${DEMUCS_PY:-}" ]; then
+SWAP=false
+printf '%s' "$PAYLOAD" | jq -c '.lines // []' > "$WORK/lines.json"
+if [ "$HAS_AUDIO" = "true" ] && [ "$(field sound "")" = "swap_music" ] && [ -x "${DEMUCS_PY:-}" ]; then
+  echo "::group::Swap the music out (keep your mic + game effects)"
+  ffmpeg -nostdin -hide_banner -loglevel error -y -i "$WORK/in.mp4" -vn -ac 2 -ar 44100 "$WORK/orig.wav"
+  if "$TTS_PY" "$HERE/audio_swap.py" "$WORK/orig.wav" "$WORK/swap" "$DEMUCS_PY" "$WORK/lines.json"; then
+    GAME_WAV="$WORK/swap/game_nomusic.wav"; SWAP=true
+  else
+    echo "::warning::Could not take the music out, keeping the original sound."
+  fi
+  echo "::endgroup::"
+elif [ "$HAS_AUDIO" = "true" ] && [ "$(field remove_voice false)" = "true" ] && [ -x "${DEMUCS_PY:-}" ]; then
   echo "::group::Remove the original talking (Demucs)"
   ffmpeg -nostdin -hide_banner -loglevel error -y -i "$WORK/in.mp4" -vn -ac 2 -ar 44100 "$WORK/orig.wav"
   "$DEMUCS_PY" -m demucs --two-stems=vocals -n htdemucs -d cpu -o "$WORK/sep" "$WORK/orig.wav"
@@ -64,8 +75,12 @@ echo "::group::Read the script (ElevenLabs or free voice)"
 ELEVEN_VOICE="$(field eleven_voice "")"; ELEVEN_VOICE="${ELEVEN_VOICE:-${ELEVENLABS_VOICE_ID:-}}"
 USED_ELEVEN=false
 TIMED=false
-printf '%s' "$PAYLOAD" | jq -c '.lines // []' > "$WORK/lines.json"
-if [ "$(jq 'length' "$WORK/lines.json")" -gt 0 ]; then
+if [ "$SWAP" = "true" ] && [ "$(jq 'length' "$WORK/lines.json")" -eq 0 ]; then
+  echo "You talk the whole way through, so no AI voice on this one."
+  ffmpeg -nostdin -loglevel error -y -f lavfi -i "anullsrc=r=24000:cl=mono" -t "$SPEECH_ROOM" "$WORK/tts.wav"
+  printf '[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Cap,DejaVu Sans,64,&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,-1,0,0,0,100,100,0,0,1,6,3,2,70,70,560,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n' > "$WORK/captions.ass"
+  TIMED=true; OFFSET=0; USED_ELEVEN=true
+elif [ "$(jq 'length' "$WORK/lines.json")" -gt 0 ]; then
   # Timed lines: every line is placed on the second it talks about, so the voice never lags the video.
   ENGINE=kokoro; VID="$VOICE"
   if [ -n "${ELEVENLABS_API_KEY:-}" ] && [ -n "$ELEVEN_VOICE" ] && [ "$(field use_eleven true)" = "true" ]; then ENGINE=eleven; VID="$ELEVEN_VOICE"; fi
@@ -166,15 +181,28 @@ VOICE_CHAIN="[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stere
 EXTRA_IN=()
 GAME_TAIL=""
 if [ "$OUTRO" != "0" ]; then GAME_TAIL=",apad,afade=out:st=$(awk -v d="$DUR" 'BEGIN { printf "%.2f", d - 0.3 }'):d=2.4"; fi
-if [ -n "${GAME_WAV:-}" ]; then EXTRA_IN=(-i "$GAME_WAV"); GAME_SRC="2:a"; fi
+NEXT=2
+if [ -n "${GAME_WAV:-}" ]; then EXTRA_IN=(-i "$GAME_WAV"); GAME_SRC="2:a"; NEXT=3; fi
+MUS_IDX=""; VOC_IDX=""
+MUSIC_ID="$(field music_id "")"
+if [ "$SWAP" = "true" ] && [ -n "$MUSIC_ID" ] && curl -fsSL --retry 2 -o "$WORK/music_raw" "https://drive.usercontent.google.com/download?id=${MUSIC_ID}&export=download&confirm=t" \
+   && ffmpeg -nostdin -loglevel error -y -i "$WORK/music_raw" -vn -ac 2 -ar 48000 "$WORK/music.wav"; then
+  EXTRA_IN+=(-stream_loop -1 -i "$WORK/music.wav"); MUS_IDX=$NEXT; NEXT=$((NEXT+1))
+  EXTRA_IN+=(-i "$WORK/swap/vocals.wav"); VOC_IDX=$NEXT; NEXT=$((NEXT+1))
+  echo "Your song goes underneath."
+fi
 if [ "$HAS_AUDIO" = "true" ]; then
   FILTER="${VOICE_CHAIN},asplit=2[v1][v2];[${GAME_SRC}]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=${GAME_VOLUME}${GAME_TAIL}[g];[g][v2]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=400[gd];[gd][v1]amix=inputs=2:duration=first:normalize=0,loudnorm=I=-14:TP=-1.5:LRA=11[a]"
 else
   FILTER="${VOICE_CHAIN},loudnorm=I=-14:TP=-1.5:LRA=11[a]"
 fi
+if [ -n "$MUS_IDX" ]; then
+  # Your song under everything, ducking whenever you or the AI voice talks.
+  FILTER="${FILTER%\[a\]}[pre0];[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,adelay=${DELAY_MS}|${DELAY_MS},apad[vkey0];[${VOC_IDX}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,apad[vkey1];[vkey0][vkey1]amix=inputs=2:normalize=0[mkey];[${MUS_IDX}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=0.2,afade=in:d=1[mus];[mus][mkey]sidechaincompress=threshold=0.015:ratio=8:attack=20:release=600[musd];[pre0][musd]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.97[a]"
+fi
 if [ "$INTRO" = "true" ]; then
   # Whoosh on the flash: filtered pink noise, made on the fly (no sound files needed).
-  W_IDX=$(( 2 + ${#EXTRA_IN[@]} / 2 ))
+  W_IDX=$NEXT
   EXTRA_IN+=(-f lavfi -t 0.6 -i "anoisesrc=c=pink:r=48000:a=0.9")
   FILTER="${FILTER%\[a\]}[pre];[${W_IDX}:a]highpass=f=600,lowpass=f=6000,afade=in:d=0.12,afade=out:st=0.12:d=0.45,volume=0.55,aformat=sample_fmts=fltp:channel_layouts=stereo[w];[pre][w]amix=inputs=2:duration=first:normalize=0[a]"
 fi

@@ -144,7 +144,7 @@ jobs:
           .venv-applio/bin/pip install -q -r applio/requirements-engine.txt
           cd applio && ../.venv-applio/bin/python core.py prerequisites --no-pretraineds-hifigan --models --no-exe
       - name: Install Demucs (removes talking from the original clip)
-        if: inputs.stage == 'narrate' && contains(inputs.payload, '"remove_voice":true')
+        if: inputs.stage == 'narrate' && (contains(inputs.payload, '"remove_voice":true') || contains(inputs.payload, '"sound":"swap_music"'))
         run: |
           python -m venv .venv-demucs
           .venv-demucs/bin/pip install -q --upgrade pip

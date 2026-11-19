@@ -91,7 +91,18 @@ if [ "$HAS_AUDIO" = "true" ]; then
     HAS_AUDIO=false
   fi
 fi
-if [ "$HAS_AUDIO" = "true" ] && [ "$(field remove_voice false)" = "true" ] && [ -x "${DEMUCS_PY:-}" ]; then
+SWAP=false
+printf '%s' "$PAYLOAD" | jq -c '.lines // []' > "$WORK/lines.json"
+if [ "$HAS_AUDIO" = "true" ] && [ "$(field sound "")" = "swap_music" ] && [ -x "${DEMUCS_PY:-}" ]; then
+  # Keep your mic + the game effects, take the music out (your song goes in instead),
+  # and drop AI lines that would talk over you.
+  echo "Swapping the music out, keeping the talking and the game effects..."
+  if "$TTS_PY" "$HERE/audio_swap.py" "$WORK/game.wav" "$WORK/swap" "$DEMUCS_PY" "$WORK/lines.json"; then
+    GAME_WAV="$WORK/swap/game_nomusic.wav"; SWAP=true
+  else
+    echo "::warning::Could not take the music out, keeping the original sound."
+  fi
+elif [ "$HAS_AUDIO" = "true" ] && [ "$(field remove_voice false)" = "true" ] && [ -x "${DEMUCS_PY:-}" ]; then
   echo "Removing the original talking (this takes a while on long videos)..."
   if "$DEMUCS_PY" -m demucs --two-stems=vocals -n htdemucs -d cpu -o "$WORK/sep" "$WORK/game.wav" && [ -s "$WORK/sep/htdemucs/game/no_vocals.wav" ]; then
     GAME_WAV="$WORK/sep/htdemucs/game/no_vocals.wav"
@@ -102,11 +113,13 @@ fi
 echo "::endgroup::"
 
 echo "::group::Voice the timed lines"
-printf '%s' "$PAYLOAD" | jq -c '.lines // []' > "$WORK/lines.json"
 echo "$(jq length "$WORK/lines.json") lines"
 ENGINE=kokoro; VID="am_puck"
 if [ -n "${ELEVENLABS_API_KEY:-}" ] && [ -n "${ELEVENLABS_VOICE_ID:-}" ]; then ENGINE=eleven; VID="$ELEVENLABS_VOICE_ID"; fi
-if ! WORDS_OUT="$WORK/words.json" TTS_SPEED=1.05 "$TTS_PY" "$HERE/tts_timed.py" "$WORK/lines.json" "$DUR" "$WORK/voice.wav" "$WORK/captions.ass" "$ENGINE" "$VID" 0.2; then
+if [ "$(jq length "$WORK/lines.json")" -eq 0 ]; then
+  echo "No AI lines left (you talk the whole way through), no AI voice."
+  ffmpeg -nostdin -loglevel error -y -f lavfi -i "anullsrc=r=24000:cl=mono" -t "$DUR" "$WORK/voice.wav"
+elif ! WORDS_OUT="$WORK/words.json" TTS_SPEED=1.05 "$TTS_PY" "$HERE/tts_timed.py" "$WORK/lines.json" "$DUR" "$WORK/voice.wav" "$WORK/captions.ass" "$ENGINE" "$VID" 0.2; then
   [ "$ENGINE" = "eleven" ] || exit 1
   echo "::warning::ElevenLabs failed, using the free voice."
   WORDS_OUT="$WORK/words.json" TTS_SPEED=1.05 "$TTS_PY" "$HERE/tts_timed.py" "$WORK/lines.json" "$DUR" "$WORK/voice.wav" "$WORK/captions.ass" kokoro am_puck 0.2
@@ -153,6 +166,8 @@ INS=(-i "$WORK/in.mp4" -i "$WORK/voice.wav"); N=2
 GI=""; MI=""; II=""; OI=""
 if [ "$HAS_AUDIO" = "true" ]; then INS+=(-i "$GAME_WAV"); GI=$N; N=$((N+1)); fi
 if [ -n "$MUSIC_ID" ]; then INS+=(-stream_loop -1 -i "$WORK/music.wav"); MI=$N; N=$((N+1)); fi
+VK=""
+if [ "$SWAP" = "true" ]; then INS+=(-i "$WORK/swap/vocals.wav"); VK=$N; N=$((N+1)); fi
 if [ -n "$INTRO_ID" ]; then INS+=(-i "$WORK/intro.mkv"); II=$N; N=$((N+1)); fi
 if [ -n "$OUTRO_ID" ]; then INS+=(-i "$WORK/outro.mkv"); OI=$N; N=$((N+1)); fi
 
@@ -174,7 +189,13 @@ else
 fi
 if [ -n "$MI" ]; then
   # Calm music bed: quiet, fades in and out, ducks further under the voice.
-  FC+=";[${MI}:a]${AFMT},atrim=0:${DUR},volume=0.09,afade=in:st=0:d=3,afade=out:st=${FADE_OUT}:d=5[m];[m][sp3]sidechaincompress=threshold=0.01:ratio=10:attack=20:release=900[md]"
+  if [ -n "$VK" ]; then
+    # Music swapped out: your song is the main music, so a bit louder, and it ducks under you AND the AI voice.
+    FC+=";[${VK}:a]${AFMT},apad,atrim=0:${DUR}[vk];[sp3][vk]amix=inputs=2:normalize=0[key]"
+    FC+=";[${MI}:a]${AFMT},atrim=0:${DUR},volume=0.22,afade=in:st=0:d=3,afade=out:st=${FADE_OUT}:d=5[m];[m][key]sidechaincompress=threshold=0.015:ratio=8:attack=20:release=700[md]"
+  else
+    FC+=";[${MI}:a]${AFMT},atrim=0:${DUR},volume=0.09,afade=in:st=0:d=3,afade=out:st=${FADE_OUT}:d=5[m];[m][sp3]sidechaincompress=threshold=0.01:ratio=10:attack=20:release=900[md]"
+  fi
   MIX+="[md]"; K=$((K+1))
 else
   FC+=";[sp3]anullsink"
