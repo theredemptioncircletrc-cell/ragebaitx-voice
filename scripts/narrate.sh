@@ -175,9 +175,16 @@ if [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ] && [ 
   CROP=$(python3 "$HERE/cropexpr.py" "$VW" "$VH" "$FOCUS" "$(awk 'BEGIN { print 1080 / 1312 }')" "$CAMX")
   echo "Streamer layout: facecam on top, game below ($FOCUS)"
   VF="${FREEZE}split[gm][cm];[gm]${CROP},scale=1080:1312:flags=lanczos,setsar=1[gv];[cm]crop=iw*${FW}:ih*${FH}:iw*${FX}:ih*${FY},scale=1080:608:flags=lanczos,setsar=1[cv];[cv][gv]vstack=inputs=2,drawbox=y=604:w=iw:h=8:color=0x00E5FF@1:t=fill,setsar=1,${PUNCH}${WM}$SUBS"
-elif [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ] && [ "$(field framing blur)" = "follow" ]; then
+elif [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ] && { [ "$(field framing blur)" = "follow" ] || [ "$(field framing blur)" = "follow_nocam" ]; }; then
   # Full-screen 9:16 crop that glides to where the AI saw the action.
-  CROP=$(python3 "$HERE/cropexpr.py" "$VW" "$VH" "$FOCUS")
+  # follow_nocam: the crop never goes into the facecam corner (bottom-right of the stream), so your face is never in the Short.
+  MAXR=""
+  if [ "$(field framing blur)" = "follow_nocam" ]; then
+    FX=$(printf '%s' "$PAYLOAD" | jq -r '(.facecam // [0.786,0.778,0.2,0.198])[0]')
+    MAXR=$(awk -v w="$VW" -v f="$FX" 'BEGIN { printf "%d", w * f - 4 }')
+    echo "Facecam hidden: crop stays left of x=$MAXR"
+  fi
+  CROP=$(python3 "$HERE/cropexpr.py" "$VW" "$VH" "$FOCUS" "" "$MAXR")
   echo "Follow-the-action crop: $FOCUS"
   VF="${FREEZE}${CROP},scale=1080:1920:flags=lanczos,setsar=1,${PUNCH}${WM}$SUBS"
 elif [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ]; then
