@@ -30,7 +30,13 @@ jobs:
             n=$((n+1))
             echo "=================== VIDEO $n: $u"
             yt-dlp -q --no-warnings --print "TITLE: %(title)s | CHANNEL: %(channel)s | %(duration)ss | views %(view_count)s" --skip-download "$u" || true
-            yt-dlp -q --no-warnings -x --audio-format wav -o "v$n.%(ext)s" "$u" || { echo "download failed"; continue; }
+            ID=$(printf '%s' "$u" | sed -nE 's#.*(/d/|[?&]id=)([A-Za-z0-9_-]{20,}).*#\2#p')
+            if [ -n "$ID" ]; then
+              curl -fsSL -o "v$n.mp4" "https://drive.usercontent.google.com/download?id=${ID}&export=download&confirm=t" \
+                && ffmpeg -nostdin -loglevel error -y -i "v$n.mp4" -vn -ac 1 -ar 16000 "v$n.wav" || { echo "Drive download failed (is it shared as anyone with the link?)"; continue; }
+            else
+              yt-dlp -q --no-warnings -x --audio-format wav -o "v$n.%(ext)s" "$u" || { echo "download failed"; continue; }
+            fi
             python - "v$n.wav" <<'PY'
           import sys
           from faster_whisper import WhisperModel
