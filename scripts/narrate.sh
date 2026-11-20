@@ -127,7 +127,8 @@ echo "::group::Mix and add captions"
 HOOK=$(printf '%s' "$PAYLOAD" | jq -r '.hook_text // ""' | tr '\n' ' ' | sed 's/[{}\\]//g' | cut -c1-90)
 if [ -n "$HOOK" ]; then
   HOOK_END=$(awk -v d="$DUR" 'BEGIN { h=int(d/3600); m=int((d%3600)/60); s=d-h*3600-m*60; printf "%d:%02d:%05.2f", h, m, s }')
-  sed -i '/^Style: Cap,/a Style: Hook,DejaVu Sans,58,\&H0000E5FF,\&H00FFFFFF,\&H00000000,\&H96000000,-1,0,0,0,100,100,0,0,1,7,3,8,70,70,190,1' "$WORK/captions.ass"
+  HOOK_MV=190; [ "$(field framing blur)" = "stream" ] && HOOK_MV=650
+  sed -i "/^Style: Cap,/a Style: Hook,DejaVu Sans,58,\&H0000E5FF,\&H00FFFFFF,\&H00000000,\&H96000000,-1,0,0,0,100,100,0,0,1,7,3,8,70,70,${HOOK_MV},1" "$WORK/captions.ass"
   printf 'Dialogue: 1,0:00:00.00,%s,Hook,,0,0,0,,{\\fscx40\\fscy40\\t(80,260,\\fscx114\\fscy114)\\t(260,360,\\fscx100\\fscy100)}%s\n' "$HOOK_END" "$HOOK" >> "$WORK/captions.ass"
 fi
 if [ "$OUTRO" != "0" ]; then
@@ -143,7 +144,9 @@ WM_ID="$(field watermark_id "")"
 if [ -n "$WM_ID" ] && [ "$(field vertical false)" = "true" ]; then
   if curl -fsSL --retry 3 -o "$WORK/logo_raw" "https://drive.usercontent.google.com/download?id=${WM_ID}&export=download&confirm=t" \
      && ffmpeg -nostdin -hide_banner -loglevel error -y -i "$WORK/logo_raw" -frames:v 1 "$WORK/logo.png"; then
-    WM="null[wmbase];movie=$WORK/logo.png,scale=w=230:h=130:force_original_aspect_ratio=decrease,format=rgba,colorchannelmixer=aa=0.8[wmlogo];[wmbase][wmlogo]overlay=(W-w)/2:40:eof_action=repeat,"
+    WMPOS="(W-w)/2:40"; WMSIZE="w=230:h=130"
+    [ "$(field framing blur)" = "stream" ] && WMPOS="24:24" && WMSIZE="w=170:h=96"
+    WM="null[wmbase];movie=$WORK/logo.png,scale=${WMSIZE}:force_original_aspect_ratio=decrease,format=rgba,colorchannelmixer=aa=0.8[wmlogo];[wmbase][wmlogo]overlay=${WMPOS}:eof_action=repeat,"
     echo "Watermark added."
   else
     echo "::warning::Could not load the watermark logo, making the clip without it."
@@ -164,7 +167,15 @@ fi
 VW=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$WORK/in.mp4")
 VH=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$WORK/in.mp4")
 FOCUS=$(printf '%s' "$PAYLOAD" | jq -c '.focus // []')
-if [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ] && [ "$(field framing blur)" = "follow" ]; then
+if [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ] && [ "$(field framing blur)" = "stream" ]; then
+  # Streamer layout: your facecam (bottom-right of the stream) in a strip on top, the game below it
+  # following the action. The game part never shows the facecam corner twice.
+  read -r FX FY FW FH <<<"$(printf '%s' "$PAYLOAD" | jq -r '(.facecam // [0.786,0.778,0.2,0.198]) | map(tostring) | join(" ")')"
+  CAMX=$(awk -v w="$VW" -v f="$FX" 'BEGIN { printf "%d", w * f }')
+  CROP=$(python3 "$HERE/cropexpr.py" "$VW" "$VH" "$FOCUS" "$(awk 'BEGIN { print 1080 / 1312 }')" "$CAMX")
+  echo "Streamer layout: facecam on top, game below ($FOCUS)"
+  VF="${FREEZE}split[gm][cm];[gm]${CROP},scale=1080:1312:flags=lanczos,setsar=1[gv];[cm]crop=iw*${FW}:ih*${FH}:iw*${FX}:ih*${FY},scale=1080:608:flags=lanczos,setsar=1[cv];[cv][gv]vstack=inputs=2,drawbox=y=604:w=iw:h=8:color=0x00E5FF@1:t=fill,setsar=1,${PUNCH}${WM}$SUBS"
+elif [ "$(field vertical false)" = "true" ] && [ "${VW:-0}" -gt "${VH:-0}" ] && [ "$(field framing blur)" = "follow" ]; then
   # Full-screen 9:16 crop that glides to where the AI saw the action.
   CROP=$(python3 "$HERE/cropexpr.py" "$VW" "$VH" "$FOCUS")
   echo "Follow-the-action crop: $FOCUS"
