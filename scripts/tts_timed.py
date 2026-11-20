@@ -144,25 +144,35 @@ def main():
         audio, words = trim_silence(audio, words)
         pieces.append((max(0.0, float(l.get("t", 0))), audio, words, text))
 
-    # Place each line at its moment; a line that is still talking pushes the next one back.
-    placed, cursor = [], offset
-    for want, audio, words, text in pieces:
-        at = max(want + offset, cursor)
-        placed.append((at, audio, words))
-        cursor = at + len(audio) / SR + MIN_GAP
-    end = cursor - MIN_GAP
+    # Place each line at its moment (plus a small human reaction delay: people react just AFTER they see it).
+    # A line that is still talking pushes the next one back. If the lines would run past the end of the clip,
+    # they are spoken a little faster, but every line still starts no earlier than its moment, so the voice
+    # never runs ahead of the video.
+    react = float(os.environ.get("REACT_DELAY") or 0.25)
     room = max(2.0, clip_s - 0.25)
+
+    def place(tempo):
+        out, cursor = [], offset
+        for want, audio, words, text in pieces:
+            at = max(want + offset + react, cursor)
+            out.append(at)
+            cursor = at + len(audio) / SR / tempo + MIN_GAP
+        return out, cursor - MIN_GAP
+
     tempo = 1.0
-    if end > room:
-        # Squeeze: everything is played a little faster, so the last line still fits.
-        tempo = min(1.3, end / room * 1.01)
-        print(f"Lines ran to {end:.1f}s for a {clip_s:.1f}s clip, speeding up x{tempo:.2f}")
+    starts, end = place(tempo)
+    while end > room and tempo < 1.25:
+        tempo = round(tempo + 0.03, 2)
+        starts, end = place(tempo)
+    if tempo > 1.0:
+        print(f"Lines would run past the {clip_s:.1f}s clip, speaking them x{tempo:.2f} faster")
+    placed = [(at, audio, words) for at, (want, audio, words, text) in zip(starts, pieces)]
 
     total = int((clip_s + 1) * SR)
     track = np.zeros(total, dtype=np.float32)
     all_words = []
     for (at, audio, words), (want, *_rest) in zip(placed, pieces):
-        start = at / tempo
+        start = at
         a = audio
         if tempo != 1.0:
             p_in, p_out = os.path.join(tmp, "s_in.wav"), os.path.join(tmp, "s_out.wav")
