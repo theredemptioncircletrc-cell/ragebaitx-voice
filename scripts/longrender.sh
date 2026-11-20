@@ -14,6 +14,13 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 mkdir -p "$WORK" "$OUT_DIR"
 source "$HERE/download.sh"
 field() { printf '%s' "$PAYLOAD" | jq -r --arg k "$1" --arg d "$2" '.[$k] // $d | tostring'; }
+# Hide the facecam (bottom-right of the stream): keep the top-left 77% of the picture (same 16:9 shape)
+# and scale it back up, so the cam is gone and nothing looks stretched or blurred out.
+CAMCROP=""
+if [ "$(field hide_cam false)" = "true" ]; then
+  CAMCROP="crop=trunc(iw*${CAM_KEEP:-0.77}/2)*2:trunc(ih*${CAM_KEEP:-0.77}/2)*2:0:0,"
+  echo "Facecam hidden (keeping the top-left ${CAM_KEEP:-0.77} of the picture)"
+fi
 drive_dl() { curl -fsSL --retry 3 -o "$2" "https://drive.usercontent.google.com/download?id=$1&export=download&confirm=t"; }
 
 echo "::group::Download"
@@ -38,7 +45,7 @@ SEG_JSON=$(printf '%s' "$PAYLOAD" | jq -c '[.segments // [] | .[] | select(lengt
 NSEG=$(jq length <<<"$SEG_JSON")
 XT=0.5
 if [ "$NSEG" -ge 1 ]; then
-  CUTBASE="scale=1920:1080:force_original_aspect_ratio=decrease:flags=lanczos,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${FPS},format=yuv420p,settb=AVTB"
+  CUTBASE="${CAMCROP}scale=1920:1080:force_original_aspect_ratio=decrease:flags=lanczos,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${FPS},format=yuv420p,settb=AVTB"
   CUT_INS=(); i=0
   while [ "$i" -lt "$NSEG" ]; do
     SS=$(jq -r ".[$i][0]" <<<"$SEG_JSON"); EE=$(jq -r ".[$i][1]" <<<"$SEG_JSON")
@@ -75,6 +82,7 @@ if [ "$NSEG" -ge 1 ]; then
   HAS_AUDIO=false
   if ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$WORK/in.mp4" | grep -q .; then HAS_AUDIO=true; fi
   echo "Edited down to ${NSEG} parts, new length ${DUR}s"
+  CAMCROP=""   # already cropped while cutting the parts
 else
   echo "No edit list, keeping the full video."
 fi
@@ -127,7 +135,7 @@ fi
 echo "::endgroup::"
 
 
-BASE="scale=1920:1080:force_original_aspect_ratio=decrease:flags=lanczos,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${FPS},format=yuv420p,settb=AVTB"
+BASE="${CAMCROP}scale=1920:1080:force_original_aspect_ratio=decrease:flags=lanczos,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${FPS},format=yuv420p,settb=AVTB"
 AFMT="aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
 
 # Intro / outro: normalise to the same size, frame rate and sound format as the main video.
