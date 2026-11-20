@@ -49,6 +49,45 @@ def speak_eleven(text, voice_id, tmp, n):
     return audio, words
 
 
+def speak_eleven_take(texts, voice_id, tmp):
+    """Reads ALL lines in ONE go (like a person talking, not a book being read line by line), then cuts the
+    recording back into its lines with ElevenLabs' character timings. Returns [(audio, words), ...] or None."""
+    from tts_eleven import call, words_from_alignment
+    model = os.environ.get("ELEVEN_MODEL") or "eleven_v3"
+    stability = float(os.environ.get("ELEVEN_STABILITY") or 0.5)
+    parts, spans, pos = [], [], 0
+    for t in texts:
+        t = t.strip()
+        if not re.search(r"[.!?\u2026]$", t):
+            t += "."
+        spans.append((pos, pos + len(t)))
+        parts.append(t)
+        pos += len(t) + 1
+    joined = " ".join(parts)
+    res = call(voice_id, joined, model, stability)
+    al = res.get("alignment") or {}
+    chars = al.get("characters") or []
+    st = al.get("character_start_times_seconds") or []
+    en = al.get("character_end_times_seconds") or []
+    if "".join(chars) != joined or len(st) != len(chars):
+        print("  one-take timings did not line up, voicing line by line instead")
+        return None
+    mp3 = os.path.join(tmp, "take.mp3")
+    with open(mp3, "wb") as f:
+        f.write(base64.b64decode(res["audio_base64"]))
+    audio = to_array(mp3)
+    out = []
+    for i, (a, b) in enumerate(spans):
+        t0 = st[a]
+        t1 = st[spans[i + 1][0]] if i + 1 < len(spans) else len(audio) / SR
+        i0, i1 = max(0, int((t0 - 0.04) * SR)), min(len(audio), int((t1 - 0.02) * SR))
+        sub = {"characters": chars[a:b], "character_start_times_seconds": [x - t0 + 0.04 for x in st[a:b]],
+               "character_end_times_seconds": [x - t0 + 0.04 for x in en[a:b]]}
+        out.append((audio[i0:i1].copy(), words_from_alignment(sub)))
+    print(f"  voiced {len(texts)} lines in one take ({len(audio) / SR:.1f}s)")
+    return out
+
+
 _PIPE = None
 
 
@@ -87,9 +126,18 @@ def main():
     tmp = tempfile.mkdtemp()
 
     pieces = []
+    take = None
+    if engine == "eleven" and os.environ.get("ELEVEN_ONE_TAKE", "1") == "1" and len(lines) > 1:
+        try:
+            take = speak_eleven_take([str(l["say"]).strip() for l in lines], voice, tmp)
+        except Exception as e:  # noqa: BLE001 - fall back to line by line
+            print(f"  one-take failed ({e}), voicing line by line")
+            take = None
     for n, l in enumerate(lines):
         text = str(l["say"]).strip()
-        if engine == "eleven":
+        if take:
+            audio, words = take[n]
+        elif engine == "eleven":
             audio, words = speak_eleven(text, voice, tmp, n)
         else:
             audio, words = speak_kokoro(text, voice, speed)
