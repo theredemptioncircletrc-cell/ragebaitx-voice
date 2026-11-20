@@ -42,9 +42,9 @@ echo "Duration ${DUR}s, game audio: $HAS_AUDIO"
 # Optional ending: freeze on the last frame with a "comment below" question card.
 OUTRO_TEXT=$(printf '%s' "$PAYLOAD" | jq -r '.outro_text // ""' | tr '\n' ' ' | sed 's/[{}\\]//g' | cut -c1-70)
 OUTRO=0
-if [ -n "$OUTRO_TEXT" ] && [ "$(field vertical false)" = "true" ]; then OUTRO=2.8; fi
+if [ -n "$OUTRO_TEXT" ] && [ "$(field vertical false)" = "true" ]; then OUTRO=3.4; fi
 TOTAL=$(awk -v d="$DUR" -v o="$OUTRO" 'BEGIN { printf "%.2f", d + o }')
-SPEECH_ROOM=$(awk -v d="$DUR" -v o="$OUTRO" 'BEGIN { printf "%.2f", d + o * 0.75 }')
+SPEECH_ROOM=$(awk -v d="$DUR" -v o="$OUTRO" 'BEGIN { printf "%.2f", d + o - 0.3 }')
 echo "::endgroup::"
 
 # Optional: remove anyone talking in the original clip (streamer mic, Opus narrator), keep the game sound.

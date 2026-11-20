@@ -167,14 +167,19 @@ def main():
     # they are spoken a little faster, but every line still starts no earlier than its moment, so the voice
     # never runs ahead of the video.
     react = float(os.environ.get("REACT_DELAY") or 0.25)
-    room = max(2.0, clip_s - 0.25)
+    room = max(2.0, clip_s - 0.15)
 
     def place(tempo):
         out, cursor = [], offset
-        for want, audio, words, text in pieces:
+        for k, (want, audio, words, text) in enumerate(pieces):
+            length = len(audio) / SR / tempo
             at = max(want + offset + react, cursor)
+            if k == len(pieces) - 1 and at + length > room:
+                # The last line (the question at the end) must be heard in full: start it a bit earlier
+                # if needed, but never over the line before it.
+                at = max(cursor, room - length)
             out.append(at)
-            cursor = at + len(audio) / SR / tempo + MIN_GAP
+            cursor = at + length + MIN_GAP
         return out, cursor - MIN_GAP
 
     tempo = 1.0
