@@ -123,7 +123,8 @@ echo "::endgroup::"
 echo "::group::Voice the timed lines"
 echo "$(jq length "$WORK/lines.json") lines"
 ENGINE=kokoro; VID="am_puck"
-if [ -n "${ELEVENLABS_API_KEY:-}" ] && [ -n "${ELEVENLABS_VOICE_ID:-}" ]; then ENGINE=eleven; VID="$ELEVENLABS_VOICE_ID"; fi
+PICK_VOICE="$(printf '%s' "$PAYLOAD" | jq -r '.eleven_voice // ""')"; PICK_VOICE="${PICK_VOICE:-${ELEVENLABS_VOICE_ID:-}}"
+if [ -n "${ELEVENLABS_API_KEY:-}" ] && [ -n "$PICK_VOICE" ]; then ENGINE=eleven; VID="$PICK_VOICE"; fi
 if [ "$(jq length "$WORK/lines.json")" -eq 0 ]; then
   echo "No AI lines left (you talk the whole way through), no AI voice."
   ffmpeg -nostdin -loglevel error -y -f lavfi -i "anullsrc=r=24000:cl=mono" -t "$DUR" "$WORK/voice.wav"

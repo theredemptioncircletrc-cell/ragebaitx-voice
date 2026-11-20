@@ -36,7 +36,8 @@ if [ "$(printf '%s' "$PAYLOAD" | jq -r 'if .narration == false then "false" else
   echo "::group::Voice (each line voiced first, the video is timed around it)"
   python3 "$HERE/compare.py" texts "$WORK/payload.json" "$WORK/texts.json"
   ENGINE=kokoro; VID="am_puck"
-  if [ -n "${ELEVENLABS_API_KEY:-}" ] && [ -n "${ELEVENLABS_VOICE_ID:-}" ]; then ENGINE=eleven; VID="$ELEVENLABS_VOICE_ID"; fi
+  PICK_VOICE="$(printf '%s' "$PAYLOAD" | jq -r '.eleven_voice // ""')"; PICK_VOICE="${PICK_VOICE:-${ELEVENLABS_VOICE_ID:-}}"
+  if [ -n "${ELEVENLABS_API_KEY:-}" ] && [ -n "$PICK_VOICE" ]; then ENGINE=eleven; VID="$PICK_VOICE"; fi
   if "$TTS_PY" "$HERE/tts_lines.py" "$WORK/texts.json" "$WORK/vo" "$ENGINE" "$VID" && [ -s "$WORK/vo/lines.json" ]; then
     export VOICE_JSON="$WORK/vo/lines.json"
   else
