@@ -197,8 +197,8 @@ else
   VF="scale='min(1080,iw)':'min(1920,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,$SUBS"
 fi
 DELAY_MS=$(awk -v o="$OFFSET" 'BEGIN { printf "%d", o * 1000 }')
-# Make the AI voice sit like a real mic in the room: cut rumble, gentle compression, a touch of presence and a very small room.
-VOICE_CHAIN="[1:a]aresample=48000,highpass=f=85,acompressor=threshold=-20dB:ratio=3:attack=6:release=90:makeup=2,equalizer=f=3200:t=q:w=1.2:g=2,aecho=0.85:0.6:22|37:0.07|0.04,aformat=sample_fmts=fltp:channel_layouts=stereo,adelay=${DELAY_MS}|${DELAY_MS},apad,volume=1.15"
+# Light clean-up only (cut rumble, gentle compression) so your ElevenLabs voice keeps its own character.
+VOICE_CHAIN="[1:a]aresample=48000,highpass=f=70,acompressor=threshold=-20dB:ratio=2:attack=8:release=120:makeup=1.5,aformat=sample_fmts=fltp:channel_layouts=stereo,adelay=${DELAY_MS}|${DELAY_MS},apad,volume=1.15"
 EXTRA_IN=()
 GAME_TAIL=""
 if [ "$OUTRO" != "0" ]; then GAME_TAIL=",apad,afade=out:st=$(awk -v d="$DUR" 'BEGIN { printf "%.2f", d - 0.3 }'):d=2.4"; fi
