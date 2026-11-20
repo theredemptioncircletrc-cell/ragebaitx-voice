@@ -88,7 +88,7 @@ jobs:
           PAYLOAD: ${{ inputs.payload }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          sleep 20  # give GitHub time to finish the artifact before n8n downloads it
+          sleep $((20 + RANDOM % 40))  # artifact ready + spread out clips that finish together (Drive rate limit)
           jq -n \
             --arg stage frames --arg status "$STATUS" --arg artifact_id "${ARTIFACT_ID:-}" \
             --arg duration "${DURATION:-0}" --arg has_audio "${HAS_AUDIO:-true}" \
@@ -98,7 +98,7 @@ jobs:
             '{stage:$stage, status:$status, artifact_id:$artifact_id, duration:($duration|tonumber? // 0), has_audio:$has_audio,
               run_id:$run_id, run_url:$run_url, job_id:$job_id, clip_id:$clip_id, clip_title:$clip_title, clip_url:$clip_url,
               payload:($payload|fromjson? // {})}' \
-          | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
+          | curl -sS --retry 5 --retry-delay 10 --retry-all-errors -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
 
   narrate:
     if: inputs.stage == 'narrate'
@@ -201,9 +201,9 @@ jobs:
           CLIP_TITLE: ${{ inputs.clip_title }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          sleep 20  # give GitHub time to finish the artifact before n8n downloads it
+          sleep $((20 + RANDOM % 40))  # artifact ready + spread out clips that finish together (Drive rate limit)
           jq -n \
             --arg status "$STATUS" --arg artifact_id "${ARTIFACT_ID:-}" --arg run_id "$GITHUB_RUN_ID" --arg run_url "$RUN_URL" \
             --arg job_id "$JOB_ID" --arg clip_id "$CLIP_ID" --arg clip_title "$CLIP_TITLE" \
             '{status:$status, artifact_id:$artifact_id, run_id:$run_id, run_url:$run_url, job_id:$job_id, clip_id:$clip_id, clip_title:$clip_title, mode:"commentary"}' \
-          | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
+          | curl -sS --retry 5 --retry-delay 10 --retry-all-errors -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"

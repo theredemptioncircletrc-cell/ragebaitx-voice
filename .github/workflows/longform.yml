@@ -76,7 +76,7 @@ jobs:
             --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" --arg video_url "$VIDEO_URL" --arg payload "$PAYLOAD" \
             '{stage:$stage, status:$status, artifact_id:$artifact_id, duration:($duration|tonumber? // 0), run_url:$run_url,
               job_id:$job_id, video_url:$video_url, payload:($payload|fromjson? // {})}' \
-          | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
+          | curl -sS --retry 5 --retry-delay 10 --retry-all-errors -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
 
   render:
     if: inputs.stage == 'render'
@@ -147,7 +147,7 @@ jobs:
             --rawfile srt <(cat out/subs.srt 2>/dev/null || true) \
             '{stage:$stage, status:$status, drive_id:$drive_id, size_mb:$size_mb, intro_s:($intro_s|tonumber? // 0),
               run_url:$run_url, job_id:$job_id, srt:$srt, meta:(($payload|fromjson? // {}).meta // {})}' \
-          | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
+          | curl -sS --retry 5 --retry-delay 10 --retry-all-errors -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
 
   post:
     # Sends a finished long video from Drive to YouTube through an upload link made by n8n.
@@ -182,4 +182,4 @@ jobs:
           sleep 20  # give GitHub time to finish the artifact before n8n downloads it
           jq -n --arg stage post --arg status "$STATUS" --arg video_id "${VIDEO_ID:-}" --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" --arg payload "$PAYLOAD" \
             '{stage:$stage, status:$status, video_id:$video_id, run_url:$run_url, job_id:$job_id, row_id:(($payload|fromjson? // {}).row_id // null), privacy:(($payload|fromjson? // {}).privacy // "")}' \
-          | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
+          | curl -sS --retry 5 --retry-delay 10 --retry-all-errors -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"

@@ -78,7 +78,7 @@ jobs:
             --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" --arg video_url "$VIDEO_URL" --arg payload "$PAYLOAD" \
             '{stage:$stage, status:$status, artifact_id:$artifact_id, old_s:($old_s|tonumber? // 0), new_s:($new_s|tonumber? // 0),
               run_url:$run_url, job_id:$job_id, video_url:$video_url, payload:($payload|fromjson? // {})}' \
-          | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
+          | curl -sS --retry 5 --retry-delay 10 --retry-all-errors -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
 
   render:
     if: inputs.stage == 'render'
@@ -139,4 +139,4 @@ jobs:
             --arg run_url "$RUN_URL" --arg job_id "$JOB_ID" --arg payload "$PAYLOAD" \
             '{stage:$stage, status:$status, short_id:$short_id, long_id:$long_id, run_url:$run_url, job_id:$job_id,
               meta:(($payload|fromjson? // {}).meta // {})}' \
-          | curl -sS --retry 3 --retry-delay 5 -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
+          | curl -sS --retry 5 --retry-delay 10 --retry-all-errors -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"
