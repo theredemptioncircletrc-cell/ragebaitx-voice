@@ -234,20 +234,8 @@ fi
 echo "::group::Upload to Google Drive"
 UPLOAD_URL=$(field upload_url "")
 if [ -z "$UPLOAD_URL" ]; then echo "::error::No Drive upload link was sent."; exit 1; fi
-# Upload in 128 MB pieces (big 4K files are more reliable this way); shows Google's reason if it refuses.
-SIZE=$(stat -c %s "$FINAL"); CH=$((128*1024*1024)); OFF=0
-while [ "$OFF" -lt "$SIZE" ]; do
-  END=$(( OFF + CH < SIZE ? OFF + CH : SIZE )); LEN=$(( END - OFF ))
-  for TRY in 1 2 3 4; do
-    CODE=$(tail -c +$((OFF+1)) "$FINAL" | head -c "$LEN" | curl -sS -X PUT -H "Content-Type: video/mp4" \
-      -H "Content-Length: $LEN" -H "Content-Range: bytes ${OFF}-$((END-1))/${SIZE}" --data-binary @- \
-      -o "$OUT_DIR/drive.json" -w "%{http_code}" "$UPLOAD_URL" || echo 000)
-    case "$CODE" in 200|201|308) break ;; esac
-    echo "Drive said $CODE: $(head -c 600 "$OUT_DIR/drive.json")"; sleep $((TRY*10))
-  done
-  case "$CODE" in 200|201|308) ;; *) echo "::error::Google Drive refused the upload ($CODE). If it says storageQuotaExceeded, your Drive is full."; exit 1 ;; esac
-  echo "  uploaded $((END/1048576)) of $((SIZE/1048576)) MB"; OFF=$END
-done
+# Upload in 64 MB pieces with automatic resume (big 4K files); shows Google's reason if it really refuses.
+python3 "$HERE/drive_upload.py" "$FINAL" "$UPLOAD_URL" "$OUT_DIR/drive.json"
 cat "$OUT_DIR/drive.json"; echo
 jq -r '.id // empty' "$OUT_DIR/drive.json" > "$OUT_DIR/drive_id.txt"
 [ -s "$OUT_DIR/drive_id.txt" ] || { echo "::error::Drive did not return a file id."; exit 1; }

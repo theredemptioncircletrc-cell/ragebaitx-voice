@@ -129,6 +129,15 @@ jobs:
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
           ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
         run: bash scripts/longrender.sh
+      - name: Keep the finished video if the upload failed (so it can be re-sent without re-rendering)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: longfinal-${{ github.run_id }}
+          path: ${{ runner.temp }}/work/final*.mp4
+          retention-days: 3
+          compression-level: 0
+          if-no-files-found: ignore
       - name: Tell n8n the result
         if: always() && inputs.callback_url != ''
         env:
