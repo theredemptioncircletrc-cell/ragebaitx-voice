@@ -18,7 +18,7 @@ GOP=$(awk -F/ '{ f = ($2 ? $1 / $2 : $1); if (f > 60 || f < 20) f = 30; printf "
 VF="hqdn3d=1.2:1.0:2.5:2.5,gradfun=0.8:12,cas=0.5,eq=contrast=1.03:saturation=1.07,scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=lanczos+accurate_rnd+full_chroma_int,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,format=yuv420p"
 echo "Quality export: ${W}x${H}, cleaned + sharpened"
 ffmpeg -nostdin -hide_banner -loglevel error -stats -y -i "$IN" -map 0:v:0 -map '0:a?' -vf "$VF" \
-  -c:v libx264 -preset "${PRESET:-superfast}" -crf 18 -maxrate 45M -bufsize 90M -g "$GOP" -pix_fmt yuv420p \
+  -c:v libx264 -preset "${PRESET:-superfast}" -crf 19 -maxrate 35M -bufsize 70M -g "$GOP" -pix_fmt yuv420p \
   -colorspace bt709 -color_primaries bt709 -color_trc bt709 \
   -c:a copy -movflags +faststart "$OUT"
 ls -lh "$OUT"
