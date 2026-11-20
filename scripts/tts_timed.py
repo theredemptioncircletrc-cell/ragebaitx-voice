@@ -72,7 +72,7 @@ def speak_eleven_take(texts, voice_id, tmp):
     if "".join(chars) != joined or len(st) != len(chars):
         print("  one-take timings did not line up, voicing line by line instead")
         return None
-    mp3 = os.path.join(tmp, "take.mp3")
+    mp3 = tempfile.mktemp(suffix=".mp3", dir=tmp)
     with open(mp3, "wb") as f:
         f.write(base64.b64decode(res["audio_base64"]))
     audio = to_array(mp3)
@@ -128,14 +128,32 @@ def main():
     pieces = []
     take = None
     if engine == "eleven" and os.environ.get("ELEVEN_ONE_TAKE", "1") == "1" and len(lines) > 1:
-        try:
-            take = speak_eleven_take([str(l["say"]).strip() for l in lines], voice, tmp)
-        except Exception as e:  # noqa: BLE001 - fall back to line by line
-            print(f"  one-take failed ({e}), voicing line by line")
-            take = None
+        # Voice lines in takes, like a person talking: a take holds lines that follow each other closely
+        # (gap under 8 s) and stays under ~1200 characters (long videos get many takes, a Short usually one).
+        groups, cur, chars = [], [], 0
+        for k, l in enumerate(lines):
+            txt = str(l["say"]).strip()
+            gap = float(l.get("t", 0)) - float(lines[k - 1].get("t", 0)) if k else 0
+            if cur and (chars + len(txt) > 1200 or gap > 8):
+                groups.append(cur); cur, chars = [], 0
+            cur.append(k); chars += len(txt) + 1
+        if cur:
+            groups.append(cur)
+        take = [None] * len(lines)
+        for g in groups:
+            if len(g) == 1:
+                continue
+            try:
+                res = speak_eleven_take([str(lines[k]["say"]).strip() for k in g], voice, tmp)
+            except Exception as e:  # noqa: BLE001 - fall back to line by line for this take
+                print(f"  take failed ({e}), voicing those lines one by one")
+                res = None
+            if res:
+                for k, r in zip(g, res):
+                    take[k] = r
     for n, l in enumerate(lines):
         text = str(l["say"]).strip()
-        if take:
+        if take and take[n] is not None:
             audio, words = take[n]
         elif engine == "eleven":
             audio, words = speak_eleven(text, voice, tmp, n)
