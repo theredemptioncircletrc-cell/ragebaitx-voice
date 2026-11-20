@@ -1,0 +1,42 @@
+name: Study example videos
+
+# Manual tool: downloads example Shorts and writes out what is said (with times), so the AI
+# commentary can learn the style. Nothing is posted or kept beyond the run log.
+on:
+  workflow_dispatch:
+    inputs:
+      urls:
+        description: "Space-separated video links"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  study:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install -q yt-dlp faster-whisper
+      - name: Transcribe
+        env:
+          URLS: ${{ inputs.urls }}
+        run: |
+          n=0
+          for u in $URLS; do
+            n=$((n+1))
+            echo "=================== VIDEO $n: $u"
+            yt-dlp -q --no-warnings --print "TITLE: %(title)s | CHANNEL: %(channel)s | %(duration)ss | views %(view_count)s" --skip-download "$u" || true
+            yt-dlp -q --no-warnings -x --audio-format wav -o "v$n.%(ext)s" "$u" || { echo "download failed"; continue; }
+            python - "v$n.wav" <<'PY'
+          import sys
+          from faster_whisper import WhisperModel
+          m = WhisperModel("small", device="cpu", compute_type="int8")
+          segs, info = m.transcribe(sys.argv[1], word_timestamps=False, vad_filter=False)
+          for s in segs:
+              print(f"[{s.start:5.1f}-{s.end:5.1f}] {s.text.strip()}")
+          PY
+          done
