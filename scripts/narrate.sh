@@ -89,9 +89,10 @@ elif [ "$(jq 'length' "$WORK/lines.json")" -gt 0 ]; then
   if TTS_SPEED="$(field speed 1.05)" "$TTS_PY" "$HERE/tts_timed.py" "$WORK/lines.json" "$SPEECH_ROOM" "$WORK/tts.wav" "$WORK/captions.ass" "$ENGINE" "$VID" 0.15; then
     TIMED=true; OFFSET=0
     [ "$ENGINE" = "eleven" ] && USED_ELEVEN=true
-  elif [ "$ENGINE" = "eleven" ] && TTS_SPEED="$(field speed 1.05)" "$TTS_PY" "$HERE/tts_timed.py" "$WORK/lines.json" "$SPEECH_ROOM" "$WORK/tts.wav" "$WORK/captions.ass" kokoro "$VOICE" 0.15; then
-    echo "::warning::ElevenLabs failed, used the free voice with timed lines."
-    TIMED=true; OFFSET=0
+  elif [ "$ENGINE" = "eleven" ]; then
+    # Never swap in a different voice: stop and say why (usually ElevenLabs credits ran out).
+    echo "::error::Your ElevenLabs voice could not read this Short (see the ElevenLabs message above: usually the monthly credits ran out). No clip was made with a different voice."
+    exit 1
   else
     echo "::warning::Timed lines failed, reading the script in one go."
   fi

@@ -129,9 +129,9 @@ if [ "$(jq length "$WORK/lines.json")" -eq 0 ]; then
   echo "No AI lines left (you talk the whole way through), no AI voice."
   ffmpeg -nostdin -loglevel error -y -f lavfi -i "anullsrc=r=24000:cl=mono" -t "$DUR" "$WORK/voice.wav"
 elif ! WORDS_OUT="$WORK/words.json" TTS_SPEED=1.05 "$TTS_PY" "$HERE/tts_timed.py" "$WORK/lines.json" "$DUR" "$WORK/voice.wav" "$WORK/captions.ass" "$ENGINE" "$VID" 0.2; then
-  [ "$ENGINE" = "eleven" ] || exit 1
-  echo "::warning::ElevenLabs failed, using the free voice."
-  WORDS_OUT="$WORK/words.json" TTS_SPEED=1.05 "$TTS_PY" "$HERE/tts_timed.py" "$WORK/lines.json" "$DUR" "$WORK/voice.wav" "$WORK/captions.ass" kokoro am_puck 0.2
+  # Never swap in a different voice: stop and say why (usually ElevenLabs credits ran out).
+  echo "::error::Your ElevenLabs voice could not read the narration (see the ElevenLabs message above: usually the monthly credits ran out). No video was made with a different voice."
+  exit 1
 fi
 echo "::endgroup::"
 

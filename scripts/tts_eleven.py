@@ -30,8 +30,15 @@ def call(voice_id, text, model, stability):
         f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/with-timestamps?output_format=mp3_44100_128",
         data=json.dumps(body).encode(), method="POST",
         headers={"xi-api-key": os.environ["ELEVENLABS_API_KEY"], "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=180) as r:
-        return json.loads(r.read())
+    try:
+        with urllib.request.urlopen(req, timeout=180) as r:
+            return json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors="replace")[:500]
+        if e.code in (401, 402, 403) or "quota" in detail.lower():
+            # Credits used up, wrong API key, or the voice is not in this account: say exactly that.
+            print(f"::error::ElevenLabs refused ({e.code}): {detail}")
+        raise
 
 
 def words_from_alignment(al):
