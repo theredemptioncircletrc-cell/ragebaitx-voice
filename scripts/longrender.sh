@@ -203,7 +203,7 @@ if [ -n "$MI" ]; then
     FC+=";[${VK}:a]${AFMT},apad,atrim=0:${DUR}[vk];[sp3][vk]amix=inputs=2:normalize=0[key]"
     FC+=";[${MI}:a]${AFMT},atrim=0:${DUR},volume=0.22,afade=in:st=0:d=3,afade=out:st=${FADE_OUT}:d=5[m];[m][key]sidechaincompress=threshold=0.015:ratio=8:attack=20:release=700[md]"
   else
-    FC+=";[${MI}:a]${AFMT},atrim=0:${DUR},volume=0.09,afade=in:st=0:d=3,afade=out:st=${FADE_OUT}:d=5[m];[m][sp3]sidechaincompress=threshold=0.01:ratio=10:attack=20:release=900[md]"
+    FC+=";[${MI}:a]${AFMT},atrim=0:${DUR},volume=${MUSIC_VOL:-0.17},afade=in:st=0:d=3,afade=out:st=${FADE_OUT}:d=5[m];[m][sp3]sidechaincompress=threshold=0.03:ratio=4:attack=30:release=600[md]"
   fi
   MIX+="[md]"; K=$((K+1))
 else
