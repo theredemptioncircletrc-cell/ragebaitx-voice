@@ -33,10 +33,22 @@ FOCUS=$(printf '%s' "$PAYLOAD" | jq -c '.focus // []')
 if [ "$VW" -gt "$VH" ]; then
   MAXR=""
   if [ "$(field hide_cam true)" = "true" ]; then MAXR=$(awk -v w="$VW" 'BEGIN { printf "%d", w * 0.786 - 4 }'); fi
-  CROP=$(python3 "$HERE/cropexpr.py" "$VW" "$VH" "$FOCUS" "" "$MAXR")
+  # Follow the action but stay inside the real picture (photo / selfie / menu boxes have blurred sides),
+  # and find the scene changes for the transition effects.
+  if python3 "$HERE/framing.py" "$WORK/in.mp4" "$FOCUS" "$MAXR" "$WORK/focus.json" "$WORK/cuts.json"; then
+    CROP=$(CROP_NOSMOOTH=1 python3 "$HERE/cropexpr.py" "$VW" "$VH" "$(cat "$WORK/focus.json")" "" "")
+  else
+    echo "::warning::Smart framing failed, using the AI focus points only."; echo '[]' > "$WORK/cuts.json"
+    CROP=$(python3 "$HERE/cropexpr.py" "$VW" "$VH" "$FOCUS" "" "$MAXR")
+  fi
   FRAME="${CROP},scale=1080:1920:flags=lanczos"
 else
   FRAME="scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920"
+  python3 "$HERE/framing.py" "$WORK/in.mp4" "[]" "" "$WORK/focus.json" "$WORK/cuts.json" || echo '[]' > "$WORK/cuts.json"
+fi
+# Transitions at the scene changes (skipped when the form says no effects).
+if [ "$(field transitions true)" = "true" ]; then
+  PAYLOAD=$(printf '%s' "$PAYLOAD" | jq -c --slurpfile c "$WORK/cuts.json" '.fx = ((.fx // []) + [$c[0][] | {type: "punch", t: .}])')
 fi
 FREEZE=""; DARK=""
 if [ "$OUTRO" != "0" ]; then
@@ -70,14 +82,14 @@ ffmpeg -nostdin -hide_banner -loglevel error -y "${INS[@]}" -filter_complex "${V
 echo "::endgroup::"
 
 FINAL="$WORK/base.mp4"
-if [ "$(printf '%s' "$PAYLOAD" | jq '[.fx // [] | .[] | select(.type == "spotlight")] | length')" -gt 0 ]; then
-  echo "::group::Zoom + callouts"
-  printf '%s' "$PAYLOAD" | jq -c '[.fx[] | select(.type == "spotlight")]' > "$WORK/fx.json"
+if [ "$(printf '%s' "$PAYLOAD" | jq '[.fx // [] | .[] | select(.type == "spotlight" or .type == "punch")] | length')" -gt 0 ]; then
+  echo "::group::Zoom + callouts + transitions"
+  printf '%s' "$PAYLOAD" | jq -c '[.fx[] | select(.type == "spotlight" or .type == "punch")]' > "$WORK/fx.json"
   mkdir -p "$WORK/sfx"
   printf '%s' "$PAYLOAD" | jq -r '.sfx // [] | .[] | "\(.id)\t\(.name)"' | while IFS=$'\t' read -r SID SNAME; do
     [ -n "$SID" ] && gdl "$SID" "$WORK/sfx/$(printf '%s' "$SNAME" | tr -c 'A-Za-z0-9._-' '_')" || true
   done
-  if GOOFY_CRF=16 GOOFY_MAX=25M python3 "$HERE/goofy.py" "$FINAL" "$WORK/fx.json" "$WORK/fx.mp4" "$DUR" "$WORK/sfx"; then FINAL="$WORK/fx.mp4"; else echo "::warning::Callouts failed, keeping the clean version."; fi
+  if CALL_SIZE=66 GOOFY_CRF=16 GOOFY_MAX=25M python3 "$HERE/goofy.py" "$FINAL" "$WORK/fx.json" "$WORK/fx.mp4" "$DUR" "$WORK/sfx"; then FINAL="$WORK/fx.mp4"; else echo "::warning::Callouts failed, keeping the clean version."; fi
   echo "::endgroup::"
 fi
 if [ "$(field quality 4k)" = "4k" ]; then

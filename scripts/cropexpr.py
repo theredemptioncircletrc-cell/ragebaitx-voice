@@ -7,6 +7,7 @@ usage: python cropexpr.py IN_W IN_H POINTS_JSON [ASPECT] [MAX_RIGHT]
 prints: crop=W:H:X:0  (X is a smooth time-based expression, commas escaped for -vf)
 """
 import json
+import os
 import sys
 
 
@@ -32,7 +33,7 @@ def main():
         clean = [(0.0, 0.5)]
     # Smooth a little so the camera glides instead of jumping.
     xs = [c[1] for c in clean]
-    sm = [sum(xs[max(0, i - 1):i + 2]) / len(xs[max(0, i - 1):i + 2]) for i in range(len(xs))]
+    sm = xs if os.environ.get("CROP_NOSMOOTH") else [sum(xs[max(0, i - 1):i + 2]) / len(xs[max(0, i - 1):i + 2]) for i in range(len(xs))]
     lo, hi = cw / 2, max(cw / 2, min(iw, max_right) - cw / 2)
     px = [(t, min(hi, max(lo, x * iw)) - cw / 2) for (t, _), x in zip(clean, sm)]
     # Piecewise-linear x(t): hold the first value before the first point, the last value after the last.

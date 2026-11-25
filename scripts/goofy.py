@@ -260,7 +260,7 @@ def zooms_pass(src, out, zs, sfx_dir, total, ass=None, extra=()):
     ff(*ins, "-filter_complex", f"[0:v]{vf}[v];{fa}", "-map", "[v]", "-map", "[a]", "-t", f"{total:.3f}", *ENC, out)
 
 
-def spotlight_pass(src, out, spots, sfx_dir, total):
+def spotlight_pass(src, out, spots, sfx_dir, total, punches=()):
     """Clean edit for every vibe: a smooth zoom-in on the key moment (no shake, no flash) and a bold callout
     ("$686 REPAIR", "TOLL: $5") that pops in, with a soft whoosh + pop. Keeps the gameplay visible."""
     def ts(x):
@@ -268,7 +268,10 @@ def spotlight_pass(src, out, spots, sfx_dir, total):
         return f"0:{int(x // 60):02d}:{x % 60:05.2f}"
     env = "+".join(
         f"if(between(t\\,{a:.2f}\\,{a + 2.4:.2f})\\,if(lt(t-{a:.2f}\\,0.35)\\,(1-cos(PI*(t-{a:.2f})/0.35))/2\\,"
-        f"if(gt(t-{a:.2f}\\,2.05)\\,(1+cos(PI*(t-{a:.2f}-2.05)/0.35))/2\\,1))\\,0)" for a in [sp["t"] for sp in spots])
+        f"if(gt(t-{a:.2f}\\,2.05)\\,(1+cos(PI*(t-{a:.2f}-2.05)/0.35))/2\\,1))\\,0)" for a in [sp["t"] for sp in spots]) or "0"
+    # Scene-change transitions: a quick zoom punch + flash + whoosh (phone comes out, camera switches...).
+    pz = "+".join(f"if(between(t\\,{a:.2f}\\,{a + 0.45:.2f})\\,sin(PI*(t-{a:.2f})/0.45)\\,0)" for a in punches) or "0"
+    fl = "+".join(f"if(between(t\\,{a:.2f}\\,{a + 0.18:.2f})\\,0.28*(1-(t-{a:.2f})/0.18)\\,0)" for a in punches) or "0"
     ev = []
     for sp in spots:
         txt = str(sp.get("text", "")).upper().strip()[:28]
@@ -284,14 +287,16 @@ WrapStyle: 2
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Call,DejaVu Sans,82,&H0000E5FF,&H00FFFFFF,&H00101010,&H00101010,-1,0,0,0,100,100,1,0,3,18,0,5,0,0,0,1
+Style: Call,DejaVu Sans,{os.environ.get("CALL_SIZE", "82")},&H0000E5FF,&H00FFFFFF,&H00101010,&H00101010,-1,0,0,0,100,100,1,0,3,18,0,5,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """ + "\n".join(ev) + "\n")
-    vf = (f"scale=w='trunc({W}*(1+0.16*({env}))/2)*2':h=-2:eval=frame,crop={W}:{H},setsar=1,subtitles={ass}")
+    vf = (f"scale=w='trunc({W}*(1+0.16*({env})+0.09*({pz}))/2)*2':h=-2:eval=frame,crop={W}:{H},setsar=1,"
+          f"eq=brightness='{fl}':eval=frame,subtitles={ass}")
     ins, fa, mix = ["-i", src], "[0:a]aresample=48000[base];", "[base]"
-    sounds = [(sp["t"], "whoosh") for sp in spots] + [(sp["t"] + 0.15, "pop") for sp in spots if sp.get("text")]
+    sounds = [(sp["t"], "whoosh") for sp in spots] + [(sp["t"] + 0.15, "pop") for sp in spots if sp.get("text")] \
+        + [(max(0.0, a - 0.12), "whoosh") for a in punches]
     for k, (z, kind) in enumerate(sounds):
         ins += ["-i", sfx(kind, sfx_dir)]
         fa += f"[{k + 1}:a]adelay={int(z * 1000)}:all=1,volume=0.55[b{k}];"
@@ -305,18 +310,20 @@ def main():
     sfx_dir = sys.argv[5] if len(sys.argv) > 5 else ""
     clip_s = float(clip_s)
     total = dur(src)
-    fx = [f for f in json.load(open(fx_path)) if isinstance(f, dict) and f.get("type") in ("zoom", "replay", "freeze", "guess", "teaser", "stamp", "var", "spotlight")]
+    fx = [f for f in json.load(open(fx_path)) if isinstance(f, dict) and f.get("type") in ("zoom", "replay", "freeze", "guess", "teaser", "stamp", "var", "spotlight", "punch")]
     spots = sorted([f for f in fx if f["type"] == "spotlight"], key=lambda f: float(f.get("t", 0) or 0))
-    fx = [f for f in fx if f["type"] != "spotlight"]
-    if spots and not fx:
+    punches = sorted(float(f.get("t", 0) or 0) for f in fx if f["type"] == "punch")
+    fx = [f for f in fx if f["type"] not in ("spotlight", "punch")]
+    if (spots or punches) and not fx:
         # Clean vibes: only smooth zooms + callouts, no cuts or inserts.
         keep, last = [], -9.0
         for sp in spots:
             sp["t"] = round(min(max(0.3, float(sp.get("t", 0) or 0)), clip_s - 2.5), 2)
             if sp["t"] - last >= 3.0 and len(keep) < 2:
                 keep.append(sp); last = sp["t"]
-        print(f"Spotlights: {[(sp['t'], sp.get('text', '')) for sp in keep]}")
-        spotlight_pass(src, out, keep, sfx_dir, total)
+        punches = [p for p in punches if 0.4 < p < clip_s - 0.8 and all(abs(p - sp["t"]) > 1.2 for sp in keep)][:5]
+        print(f"Spotlights: {[(sp['t'], sp.get('text', '')) for sp in keep]}, transitions: {punches}")
+        spotlight_pass(src, out, keep, sfx_dir, total, punches)
         print(f"Clean edit done: {dur(out):.1f}s")
         return
     stamps = [f for f in fx if f["type"] == "stamp" and str(f.get("text", "")).strip()]
