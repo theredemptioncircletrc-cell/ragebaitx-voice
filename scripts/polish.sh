@@ -82,9 +82,20 @@ ffmpeg -nostdin -hide_banner -loglevel error -y "${INS[@]}" -filter_complex "${V
 echo "::endgroup::"
 
 FINAL="$WORK/base.mp4"
-if [ "$(printf '%s' "$PAYLOAD" | jq '[.fx // [] | .[] | select(.type == "spotlight" or .type == "punch")] | length')" -gt 0 ]; then
-  echo "::group::Zoom + callouts + transitions"
+if [ "$(printf '%s' "$PAYLOAD" | jq '[.fx // [] | .[] | select(.type == "spotlight" or .type == "punch" or .type == "meme")] | length')" -gt 0 ]; then
+  echo "::group::Zoom + callouts + transitions + memes"
   printf '%s' "$PAYLOAD" | jq -c '[.fx[] | select(.type == "spotlight" or .type == "punch")]' > "$WORK/fx.json"
+  # Memes the AI picked: download the sound / image from Drive and add them with local paths.
+  mkdir -p "$WORK/meme"; K=0
+  printf '%s' "$PAYLOAD" | jq -c '.fx[] | select(.type == "meme")' | while read -r M; do
+    K=$((K+1)); T=$(printf '%s' "$M" | jq -r '.t'); SID=$(printf '%s' "$M" | jq -r '.sound_id // ""'); IID=$(printf '%s' "$M" | jq -r '.image_id // ""')
+    SP=""; IP=""
+    if [ -n "$SID" ] && gdl "$SID" "$WORK/meme/s$K.raw" && ffmpeg -nostdin -loglevel error -y -i "$WORK/meme/s$K.raw" -vn -ac 2 -ar 48000 "$WORK/meme/s$K.wav"; then SP="$WORK/meme/s$K.wav"; fi
+    if [ -n "$IID" ] && gdl "$IID" "$WORK/meme/i$K.raw" && ffmpeg -nostdin -loglevel error -y -i "$WORK/meme/i$K.raw" -frames:v 1 "$WORK/meme/i$K.png"; then IP="$WORK/meme/i$K.png"; fi
+    jq -nc --argjson t "$T" --arg s "$SP" --arg i "$IP" '{type: "meme", t: $t, sound: $s, image: $i}' >> "$WORK/meme/list.jsonl"
+    echo "Meme at ${T}s: $(printf '%s' "$M" | jq -r '(.sound_name // "") + " " + (.image_name // "")')"
+  done
+  if [ -s "$WORK/meme/list.jsonl" ]; then jq -s --slurpfile f "$WORK/fx.json" '$f[0] + .' "$WORK/meme/list.jsonl" > "$WORK/fx2.json" && mv "$WORK/fx2.json" "$WORK/fx.json"; fi
   mkdir -p "$WORK/sfx"
   printf '%s' "$PAYLOAD" | jq -r '.sfx // [] | .[] | "\(.id)\t\(.name)"' | while IFS=$'\t' read -r SID SNAME; do
     [ -n "$SID" ] && gdl "$SID" "$WORK/sfx/$(printf '%s' "$SNAME" | tr -c 'A-Za-z0-9._-' '_')" || true

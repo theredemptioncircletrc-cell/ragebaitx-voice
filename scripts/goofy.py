@@ -260,7 +260,7 @@ def zooms_pass(src, out, zs, sfx_dir, total, ass=None, extra=()):
     ff(*ins, "-filter_complex", f"[0:v]{vf}[v];{fa}", "-map", "[v]", "-map", "[a]", "-t", f"{total:.3f}", *ENC, out)
 
 
-def spotlight_pass(src, out, spots, sfx_dir, total, punches=()):
+def spotlight_pass(src, out, spots, sfx_dir, total, punches=(), memes=()):
     """Clean edit for every vibe: a smooth zoom-in on the key moment (no shake, no flash) and a bold callout
     ("$686 REPAIR", "TOLL: $5") that pops in, with a soft whoosh + pop. Keeps the gameplay visible."""
     def ts(x):
@@ -297,12 +297,28 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     ins, fa, mix = ["-i", src], "[0:a]aresample=48000[base];", "[base]"
     sounds = [(sp["t"], "whoosh") for sp in spots] + [(sp["t"] + 0.15, "pop") for sp in spots if sp.get("text")] \
         + [(max(0.0, a - 0.12), "whoosh") for a in punches]
-    for k, (z, kind) in enumerate(sounds):
-        ins += ["-i", sfx(kind, sfx_dir)]
-        fa += f"[{k + 1}:a]adelay={int(z * 1000)}:all=1,volume=0.55[b{k}];"
+    files = [(z, sfx(kind, sfx_dir), 0.55) for z, kind in sounds]
+    # Meme sounds: your file, leading silence cut, max 3 s with a fade, a bit louder than the small effects.
+    files += [(m["t"], m["sound"], 0.85) for m in memes if m.get("sound")]
+    n = 0
+    for k, (z, path, vol) in enumerate(files):
+        ins += ["-i", path]; n += 1
+        trim = "" if vol < 0.8 else "silenceremove=start_periods=1:start_threshold=-45dB,atrim=0:3,afade=t=out:st=2.6:d=0.4,"
+        fa += f"[{n}:a]aresample=48000,aformat=channel_layouts=stereo,{trim}adelay={int(z * 1000)}:all=1,volume={vol}[b{k}];"
         mix += f"[b{k}]"
-    fa += f"{mix}amix=inputs={len(sounds) + 1}:duration=first:normalize=0,alimiter=limit=0.97[a]"
-    ff(*ins, "-filter_complex", f"[0:v]{vf}[v];{fa}", "-map", "[v]", "-map", "[a]", "-t", f"{total:.3f}", *ENC, out)
+    fa += f"{mix}amix=inputs={len(files) + 1}:duration=first:normalize=0,alimiter=limit=0.97[a]"
+    # Meme images: pop in (scale bounce) in the upper middle with a white border, about 1.5 s, then fade.
+    vchain, last = f"[0:v]{vf}[v0]", "v0"
+    for j, m in enumerate([m for m in memes if m.get("image")]):
+        ins += ["-loop", "1", "-t", f"{total:.3f}", "-i", m["image"]]; n += 1
+        a, d = m["t"], float(m.get("dur", 1.6))
+        pop = f"if(lt(t-{a:.2f}\\,0.18)\\,0.3+0.85*(t-{a:.2f})/0.18\\,if(lt(t-{a:.2f}\\,0.3)\\,1.15-0.15*(t-{a:.2f}-0.18)/0.12\\,1))"
+        vchain += (f";[{n}:v]scale=560:560:force_original_aspect_ratio=decrease,pad=iw+16:ih+16:8:8:color=white,format=rgba,"
+                   f"fade=t=out:st={a + d - 0.25:.2f}:d=0.25:alpha=1,"
+                   f"scale=w='trunc(iw*max(0.01\\,{pop})/2)*2':h=-2:eval=frame[m{j}];"
+                   f"[{last}][m{j}]overlay=x=(W-w)/2:y=640-h/2:enable='between(t\\,{a:.2f}\\,{a + d:.2f})'[v{j + 1}]")
+        last = f"v{j + 1}"
+    ff(*ins, "-filter_complex", f"{vchain};{fa}", "-map", f"[{last}]", "-map", "[a]", "-t", f"{total:.3f}", *ENC, out)
 
 
 def main():
@@ -310,11 +326,12 @@ def main():
     sfx_dir = sys.argv[5] if len(sys.argv) > 5 else ""
     clip_s = float(clip_s)
     total = dur(src)
-    fx = [f for f in json.load(open(fx_path)) if isinstance(f, dict) and f.get("type") in ("zoom", "replay", "freeze", "guess", "teaser", "stamp", "var", "spotlight", "punch")]
+    fx = [f for f in json.load(open(fx_path)) if isinstance(f, dict) and f.get("type") in ("zoom", "replay", "freeze", "guess", "teaser", "stamp", "var", "spotlight", "punch", "meme")]
     spots = sorted([f for f in fx if f["type"] == "spotlight"], key=lambda f: float(f.get("t", 0) or 0))
     punches = sorted(float(f.get("t", 0) or 0) for f in fx if f["type"] == "punch")
-    fx = [f for f in fx if f["type"] not in ("spotlight", "punch")]
-    if (spots or punches) and not fx:
+    memes = sorted([f for f in fx if f["type"] == "meme" and (f.get("sound") or f.get("image"))], key=lambda f: float(f.get("t", 0) or 0))
+    fx = [f for f in fx if f["type"] not in ("spotlight", "punch", "meme")]
+    if (spots or punches or memes) and not fx:
         # Clean vibes: only smooth zooms + callouts, no cuts or inserts.
         keep, last = [], -9.0
         for sp in spots:
@@ -322,8 +339,13 @@ def main():
             if sp["t"] - last >= 3.0 and len(keep) < 2:
                 keep.append(sp); last = sp["t"]
         punches = [p for p in punches if 0.4 < p < clip_s - 0.8 and all(abs(p - sp["t"]) > 1.2 for sp in keep)][:5]
-        print(f"Spotlights: {[(sp['t'], sp.get('text', '')) for sp in keep]}, transitions: {punches}")
-        spotlight_pass(src, out, keep, sfx_dir, total, punches)
+        mk = []
+        for m in memes:
+            m["t"] = round(min(max(0.3, float(m.get("t", 0) or 0)), clip_s - 1.0), 2)
+            if len(mk) < 2 and (not mk or m["t"] - mk[-1]["t"] >= 3.0) and all(abs(m["t"] - sp["t"]) >= 1.5 for sp in keep):
+                mk.append(m)
+        print(f"Spotlights: {[(sp['t'], sp.get('text', '')) for sp in keep]}, transitions: {punches}, memes: {[(m['t'], os.path.basename(m.get('sound') or ''), os.path.basename(m.get('image') or '')) for m in mk]}")
+        spotlight_pass(src, out, keep, sfx_dir, total, punches, mk)
         print(f"Clean edit done: {dur(out):.1f}s")
         return
     stamps = [f for f in fx if f["type"] == "stamp" and str(f.get("text", "")).strip()]
