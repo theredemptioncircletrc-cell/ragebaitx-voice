@@ -1,5 +1,7 @@
 name: Peek at a video
 # Debug helper: frames from a Drive video (finished Short or source clip), saved as an artifact.
+permissions:
+  contents: write
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +19,9 @@ jobs:
           download_clip "$VIDEO_URL" v.mp4
           ffprobe -v error -show_entries stream=width,height:format=duration -of compact v.mp4
           mkdir -p peek
-          ffmpeg -nostdin -loglevel error -i v.mp4 -vf "fps=1/${EVERY},scale=-2:480" peek/f_%03d.jpg
-      - uses: actions/upload-artifact@v4
-        with: { name: peek, path: peek }
+          ffmpeg -nostdin -loglevel error -i v.mp4 -vf "fps=1/${EVERY},scale=-2:540" peek/f_%03d.jpg
+      - name: Save frames to the peek branch
+        run: |
+          git config user.name peek; git config user.email peek@users.noreply.github.com
+          git checkout --orphan peek-tmp && git rm -rqf . && mv peek/* . && rm -rf peek v.mp4
+          git add f_*.jpg && git commit -qm "peek ${{ github.run_id }}" && git push -qf origin HEAD:refs/heads/peek
