@@ -1,0 +1,106 @@
+name: Clip polisher
+
+# Started by the n8n workflow "RagebaitX – Clip Polisher" for Shorts you clip yourself (no AI voice).
+#   scan   : frame grid + transcript of the clip -> n8n (the AI writes the hook, callouts, question, title)
+#   render : vertical framing, captions, hook, zoom + callouts, background song, logo, end card, 4K,
+#            uploaded to Drive 06 - Highlights Review
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "scan or render"
+        required: true
+        default: "scan"
+      video_url:
+        description: "Google Drive share link of the clip"
+        required: true
+      job_id:
+        description: "n8n job ID"
+        required: false
+        default: "manual"
+      callback_url:
+        description: "n8n webhook that receives the result"
+        required: false
+        default: ""
+      payload:
+        description: "JSON passed through to n8n (scan) / render settings (render)"
+        required: false
+        default: "{}"
+
+run-name: "Polish ${{ inputs.stage }}: ${{ inputs.job_id }}"
+
+permissions:
+  contents: write
+
+jobs:
+  scan:
+    if: inputs.stage == 'scan'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg jq fonts-dejavu-core >/dev/null
+          pip install -q faster-whisper
+      - name: Grid and transcript
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VIDEO_URL: ${{ inputs.video_url }}
+        run: |
+          source scripts/download.sh
+          download_clip "$VIDEO_URL" clip.mp4
+          python scripts/polish.py scan clip.mp4 out
+      - name: Tell n8n the result
+        if: always() && inputs.callback_url != ''
+        env:
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          STATUS: ${{ job.status }}
+          JOB_ID: ${{ inputs.job_id }}
+          VIDEO_URL: ${{ inputs.video_url }}
+          PAYLOAD: ${{ inputs.payload }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          sleep $((RANDOM % 30))  # spread out clips that finish together
+          [ -f out/scan.json ] || echo '{}' > out/scan.json
+          GRID=""; [ -f out/grid.jpg ] && GRID=$(base64 -w0 out/grid.jpg)
+          jq -n --arg stage scan --arg status "$STATUS" --arg job_id "$JOB_ID" --arg video_url "$VIDEO_URL" --arg run_url "$RUN_URL" \
+            --arg payload "$PAYLOAD" --slurpfile scan out/scan.json --arg grid "$GRID" \
+            '{stage:$stage, status:$status, job_id:$job_id, video_url:$video_url, run_url:$run_url,
+              payload:($payload|fromjson? // {}), scan:$scan[0], grid:$grid}' > cb.json
+          curl -sS --retry 5 --retry-delay 10 --retry-all-errors -X POST -H "Content-Type: application/json" --data @cb.json "$CALLBACK_URL"
+
+  render:
+    if: inputs.stage == 'render'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg jq fonts-dejavu-core python3-numpy >/dev/null
+      - name: Make the Short
+        id: render
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VIDEO_URL: ${{ inputs.video_url }}
+          PAYLOAD: ${{ inputs.payload }}
+          OUT_DIR: ${{ github.workspace }}/out
+          WORK_DIR: ${{ runner.temp }}/work
+        run: bash scripts/polish.sh
+      - name: Tell n8n the result
+        if: always() && inputs.callback_url != ''
+        env:
+          CALLBACK_URL: ${{ inputs.callback_url }}
+          STATUS: ${{ job.status }}
+          DRIVE_ID: ${{ steps.render.outputs.drive_id }}
+          JOB_ID: ${{ inputs.job_id }}
+          PAYLOAD: ${{ inputs.payload }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          sleep $((5 + RANDOM % 40))  # spread out clips that finish together (Drive rate limit)
+          jq -n --arg stage render --arg status "$STATUS" --arg drive_id "${DRIVE_ID:-}" --arg job_id "$JOB_ID" --arg run_url "$RUN_URL" --arg payload "$PAYLOAD" \
+            '{stage:$stage, status:$status, drive_id:$drive_id, job_id:$job_id, run_url:$run_url, meta:(($payload|fromjson? // {}).meta // {})}' \
+          | curl -sS --retry 5 --retry-delay 10 --retry-all-errors -X POST -H "Content-Type: application/json" --data @- "$CALLBACK_URL"

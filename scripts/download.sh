@@ -49,8 +49,9 @@ download_clip() {
     else
       rm -rf "$d"
       _drive_get "$id" "$out" || return 1
-      # Keep a copy for the next jobs on this video (best effort; never fails the job).
-      (
+      # Keep a copy for the next jobs on this video (best effort; never fails the job). Only for big
+      # videos (long streams); short clips are cheap to download again.
+      [ "$(stat -c %s "$out")" -gt 500000000 ] && (
         set +e
         p=$(mktemp -d); split -b 1900m -d -a 2 "$out" "$p/part_"
         gh release create "$tag" -R "$GITHUB_REPOSITORY" --title "Source copy $id" --notes "Auto copy of a Drive video, deleted after 4 days." --prerelease "$p"/part_* >/dev/null 2>&1 \
