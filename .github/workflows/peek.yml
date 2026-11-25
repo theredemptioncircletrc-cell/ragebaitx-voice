@@ -1,0 +1,22 @@
+name: Peek at a video
+# Debug helper: frames from a Drive video (finished Short or source clip), saved as an artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      video_url: { description: "Drive link", required: true }
+      every: { description: "seconds between frames", required: false, default: "2" }
+jobs:
+  peek:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+      - env: { GH_TOKEN: "${{ github.token }}", VIDEO_URL: "${{ inputs.video_url }}", EVERY: "${{ inputs.every }}" }
+        run: |
+          source scripts/download.sh
+          download_clip "$VIDEO_URL" v.mp4
+          ffprobe -v error -show_entries stream=width,height:format=duration -of compact v.mp4
+          mkdir -p peek
+          ffmpeg -nostdin -loglevel error -i v.mp4 -vf "fps=1/${EVERY},scale=-2:480" peek/f_%03d.jpg
+      - uses: actions/upload-artifact@v4
+        with: { name: peek, path: peek }
