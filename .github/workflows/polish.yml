@@ -66,9 +66,9 @@ jobs:
         run: |
           sleep $((RANDOM % 30))  # spread out clips that finish together
           [ -f out/scan.json ] || echo '{}' > out/scan.json
-          GRID=""; [ -f out/grid.jpg ] && GRID=$(base64 -w0 out/grid.jpg)
+          if [ -f out/grid.jpg ]; then base64 -w0 out/grid.jpg > grid.b64; else : > grid.b64; fi
           jq -n --arg stage scan --arg status "$STATUS" --arg job_id "$JOB_ID" --arg video_url "$VIDEO_URL" --arg run_url "$RUN_URL" \
-            --arg payload "$PAYLOAD" --slurpfile scan out/scan.json --arg grid "$GRID" \
+            --arg payload "$PAYLOAD" --slurpfile scan out/scan.json --rawfile grid grid.b64 \
             '{stage:$stage, status:$status, job_id:$job_id, video_url:$video_url, run_url:$run_url,
               payload:($payload|fromjson? // {}), scan:$scan[0], grid:$grid}' > cb.json
           curl -sS --retry 5 --retry-delay 10 --retry-all-errors -X POST -H "Content-Type: application/json" --data @cb.json "$CALLBACK_URL"
