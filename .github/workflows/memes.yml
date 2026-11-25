@@ -1,0 +1,22 @@
+name: Inspect memes
+# Debug helper: downloads the meme images + sounds listed in memes.json and pushes a report to the "peek" branch.
+permissions:
+  contents: write
+on:
+  workflow_dispatch:
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg jq fonts-dejavu-core >/dev/null
+          pip install -q faster-whisper
+      - run: python scripts/inspect_memes.py memes.json report
+      - name: Push report
+        run: |
+          git config user.name peek; git config user.email peek@users.noreply.github.com
+          cp -r report /tmp/report && git checkout --orphan peek-tmp && git rm -rqf . && cp -r /tmp/report/* . 
+          git add -A && git commit -qm "memes ${{ github.run_id }}" && git push -qf origin HEAD:refs/heads/peek
