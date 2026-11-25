@@ -89,7 +89,9 @@ def build_ass(payload_path, scan_path, dur, outro, out):
         ev.append(f"Dialogue: 2,{ts(0)},{ts(dur)},Hook,,0,0,0,,{{\\fscx40\\fscy40\\t(80,260,\\fscx114\\fscy114)\\t(260,360,\\fscx100\\fscy100)}}{hook}")
     q = esc(p.get("outro_text", "")).upper()[:60]
     if q and outro > 0:
-        ev.append(f"Dialogue: 3,{ts(dur)},{ts(dur + outro)},Outro,,0,0,0,,{{\\fscx30\\fscy30\\t(0,200,\\fscx110\\fscy110)\\t(200,300,\\fscx100\\fscy100)\\c&H0000E5FF&}}{q}\\N{{\\fs42\\c&HFFFFFF&}}COMMENT BELOW")
+        # A question gets "COMMENT BELOW" under it; a fact / statement stands on its own.
+        tail = "\\N{\\fs42\\c&HFFFFFF&}COMMENT BELOW" if q.endswith("?") else ""
+        ev.append(f"Dialogue: 3,{ts(dur)},{ts(dur + outro)},Outro,,0,0,0,,{{\\fscx30\\fscy30\\t(0,200,\\fscx110\\fscy110)\\t(200,300,\\fscx100\\fscy100)\\c&H0000E5FF&}}{q}{tail}")
     open(out, "w").write(f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {W}
